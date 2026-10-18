@@ -1,0 +1,31 @@
+# ---------- .NET / Visual Studio ----------
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.pdb
+.vs/
+
+# ---------- 构建产物 ----------
+publish/
+build-*/
+build-test-data*/
+Setup/*.exe
+Installer/payload.zip
+*.exe
+
+# ---------- WebView2 运行时缓存 ----------
+*.WebView2/
+**/*.WebView2/
+
+# ---------- Python（临时调试脚本） ----------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# ---------- 其它 ----------
+Thumbs.db
+.DS_Store
+*.log

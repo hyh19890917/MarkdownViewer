@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MarkdownViewer-Setup</AssemblyName>
+    <RootNamespace>MarkdownViewerInstaller</RootNamespace>
+    <ApplicationIcon>..\MarkdownViewer\app.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>MarkdownViewer Installer</Product>
+    <FileVersion>1.0.0.0</FileVersion>
+    <!-- 单文件自包含：用户机器无需安装 .NET 运行时；启用压缩减小体积 -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+  </ItemGroup>
+
+  <!-- 主程序（自包含单文件 + WebAssets）打包成 payload.zip 内嵌 -->
+  <ItemGroup>
+    <EmbeddedResource Include="payload.zip" />
+  </ItemGroup>
+
+</Project>
