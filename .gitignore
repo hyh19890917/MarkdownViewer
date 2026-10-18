@@ -7,13 +7,11 @@ obj/
 *.pdb
 .vs/
 
-# ---------- 构建产物 ----------
-publish/
+# ---------- 构建中间产物 ----------
 build-*/
 build-test-data*/
-Setup/*.exe
 Installer/payload.zip
-*.exe
+tmp_*
 
 # ---------- WebView2 运行时缓存 ----------
 *.WebView2/

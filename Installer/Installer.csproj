@@ -21,9 +21,7 @@
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
   </ItemGroup>
 
-  <!-- 主程序（自包含单文件 + WebAssets）打包成 payload.zip 内嵌 -->
-  <ItemGroup>
-    <EmbeddedResource Include="payload.zip" />
-  </ItemGroup>
+  <!-- payload.zip 不再内嵌：安装时从安装器同目录读取，
+       让安装器单文件保持在 GitHub 100MB 限制以内 -->
 
 </Project>

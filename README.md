@@ -68,17 +68,23 @@ markdownviewer/
 │   ├── Program.cs                   # 安装/卸载/快捷方式/.md 关联
 │   └── payload.zip                  # 构建时生成的内嵌主程序包
 ├── Setup/
-│   └── MarkdownViewer-Setup-1.0.0.exe   # 最终安装包（单文件）
+│   ├── MarkdownViewer-Setup-1.0.0.exe   # 安装器（自包含 .NET 运行时，<100MB）
+│   └── payload.zip                      # 主程序载荷，安装时复制到安装目录
 ├── LICENSE                          # GNU GPL v3 许可证
 ├── THIRD-PARTY-NOTICES.md           # 第三方组件版权声明
 └── README.md
 ```
 
-## 安装包（Setup.exe）
+## 安装包（安装器 + payload.zip）
 
-`Setup\MarkdownViewer-Setup-1.0.0.exe` 是**单文件、免管理员权限**的安装包：
+安装包由**两个文件**组成，必须放在同一目录：
 
-- 内嵌 .NET 运行时（自包含，目标机无需预装 .NET；WebView2 运行时 Win10/11 一般已内置）
+- `Setup\MarkdownViewer-Setup-1.0.0.exe`：安装器（自包含 .NET 运行时，约 70MB）
+- `Setup\payload.zip`：主程序载荷（约 66MB）
+
+> 安装器不再把载荷内嵌到自身，避免单文件超过 GitHub 100MB 限制。安装时从安装器所在目录读取 `payload.zip` 并解压到用户选择的安装目录；如果缺少该文件，安装器会提示两者需放在同一目录。
+
+- **免管理员权限**（默认安装到当前用户目录；选择 `Program Files` 时需管理员身份运行）
 - **向导中可自行选择安装目录**（「浏览...」按钮），默认 `%LOCALAPPDATA%\Programs\MarkdownViewer`（当前用户，无 UAC）
 - 选择 `Program Files` 等系统目录时需以管理员身份运行安装包（无写权限会给出明确提示）
 - 可选：开始菜单快捷方式、桌面快捷方式、关联 `.md/.markdown/.mdx`
@@ -96,11 +102,12 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
   -p:IncludeNativeLibrariesForSelfExtract=true -o build-payload
 Compress-Archive -Path build-payload\* -DestinationPath Installer\payload.zip -Force
 
-# 2. 发布安装器（内嵌 payload.zip）
+# 2. 发布安装器（不再内嵌 payload.zip）
 dotnet publish Installer\Installer.csproj -c Release -r win-x64 `
   --self-contained true -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true -o build-setup
 Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.0.0.exe -Force
+Copy-Item Installer\payload.zip Setup\payload.zip -Force
 ```
 
 ## 编译

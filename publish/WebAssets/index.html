@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>MarkdownViewer</title>
+    <!-- CodeMirror 5（离线，BSD 许可）：必须先于 style.css 加载，
+         否则其自带的 .CodeMirror{height:300px} 会覆盖编辑器的全高布局 -->
+    <link rel="stylesheet" href="vendor/codemirror/codemirror.min.css"/>
+    <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+<div id="workbench" class="view-preview">
+    <!-- 编辑面板（CodeMirror） -->
+    <div id="editor-pane">
+        <div id="editor"></div>
+    </div>
+
+    <!-- 编辑器 / 预览 分栏分隔条（可拖动，双击恢复 50%） -->
+    <div id="edit-splitter" title="拖动调整分栏宽度（双击恢复 50%）"></div>
+
+    <!-- 预览面板（滚动容器） -->
+    <div id="preview-pane">
+        <div id="md-body" class="markdown-body">
+            <div class="welcome">
+                <h1>MarkdownViewer</h1>
+                <p>轻量 Markdown 阅读与编辑器（WebView2 + markdown-it + CodeMirror）</p>
+                <ul>
+                    <li>点击工具栏「打开文件」或直接把 <code>.md</code> 文件拖入窗口</li>
+                    <li>左侧自动生成 H1~H6 目录，点击跳转，滚动时自动高亮</li>
+                    <li>工具栏切换「预览 / 分栏 / 编辑」；编辑模式下 <code>Ctrl+S</code> 保存</li>
+                    <li>支持命令行参数：<code>MarkdownViewer.exe 文档.md</code></li>
+                    <li>支持 GFM 表格、任务列表、代码块、相对路径图片</li>
+                    <li>菜单「帮助 → 关于 MarkdownViewer」可查看版本、作者与开源协议</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="vendor/codemirror/codemirror.min.js"></script>
+<script src="vendor/codemirror/mode/xml/xml.min.js"></script>
+<script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
+<script src="vendor/codemirror/mode/css/css.min.js"></script>
+<script src="vendor/codemirror/mode/markdown/markdown.min.js"></script>
+<script src="vendor/codemirror/addon/mode/overlay.min.js"></script>
+<script src="vendor/codemirror/mode/gfm/gfm.min.js"></script>
+<script src="vendor/codemirror/addon/edit/closebrackets.min.js"></script>
+<script src="vendor/codemirror/addon/edit/continuelist.min.js"></script>
+<script src="vendor/codemirror/addon/selection/active-line.min.js"></script>
+<script src="js/markdown-it.min.js"></script>
+<script src="js/render.js"></script>
+</body>
+</html>

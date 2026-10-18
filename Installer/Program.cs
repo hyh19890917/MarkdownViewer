@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
@@ -128,13 +127,26 @@ internal static class Program
                 $"没有权限写入目录「{installDir}」。\n请更换目录（如用户目录），或以管理员身份运行安装包。", ex);
         }
 
-        var asm = Assembly.GetExecutingAssembly();
-        var resName = asm.GetManifestResourceNames()
-            .First(n => n.EndsWith("payload.zip", StringComparison.OrdinalIgnoreCase));
-        using (var stream = asm.GetManifestResourceStream(resName)!)
-        using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
+        // payload.zip 位于安装器同目录（不再内嵌，避免安装包单文件超过 100MB）
+        var payloadZip = Path.Combine(AppContext.BaseDirectory, "payload.zip");
+        var payloadDir = Path.Combine(AppContext.BaseDirectory, "payload");
+        if (File.Exists(payloadZip))
         {
+            using var stream = File.OpenRead(payloadZip);
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
             zip.ExtractToDirectory(installDir, true);
+        }
+        else if (Directory.Exists(payloadDir))
+        {
+            log?.Invoke("正在复制程序文件...");
+            CopyDirectory(payloadDir, installDir);
+        }
+        else
+        {
+            throw new FileNotFoundException(
+                "未找到安装载荷 payload.zip。\n" +
+                "请将 payload.zip 与安装程序放在同一目录后重试。\n\n" +
+                "期望路径：" + payloadZip);
         }
 
         // 复制自身作为卸载器
@@ -340,6 +352,24 @@ internal static class Program
         }
     }
 
+    /// <summary>递归复制目录（payload 以文件夹形式随安装器分发时使用）。</summary>
+    private static void CopyDirectory(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+        foreach (var dir in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(sourceDir, dir);
+            Directory.CreateDirectory(Path.Combine(targetDir, rel));
+        }
+        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(sourceDir, file);
+            var dest = Path.Combine(targetDir, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(file, dest, true);
+        }
+    }
+
     [DllImport("shell32.dll", CharSet = CharSet.Auto)]
     private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
@@ -401,8 +431,8 @@ public class InstallForm : Form
 
         var tip = new Label
         {
-            Text = "提示：默认装在当前用户目录，无需管理员权限；如需装到 Program Files 请以管理员身份运行。",
-            Left = 24, Top = 305, Width = 490, Height = 22,
+            Text = "提示：安装程序需与 payload.zip 放在同一目录；默认装在当前用户目录，无需管理员权限。",
+            Left = 24, Top = 305, Width = 490, Height = 40,
             ForeColor = Color.Gray,
             Font = new Font("Microsoft YaHei UI", 8.5f)
         };
