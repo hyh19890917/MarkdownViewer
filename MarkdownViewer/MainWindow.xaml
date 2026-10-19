@@ -20,6 +20,255 @@
         <SolidColorBrush x:Key="SplitterBrush" Color="#D0D7DE"/>
         <SolidColorBrush x:Key="StatusTextBrush" Color="#57606A"/>
         <SolidColorBrush x:Key="BorderBrush2" Color="#D0D7DE"/>
+
+        <!-- ===== 菜单 / 右键菜单：自定义模板，保证暗色与护眼主题下背景与文字可读 ===== -->
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Margin="6,4" Background="{DynamicResource BorderBrush2}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Grid>
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="Check" Grid.Column="0" Text="✓"
+                                               Margin="0,0,6,0" Visibility="Collapsed"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TocTextBrush}"/>
+                                    <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                                      RecognizesAccessKey="True"
+                                                      VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}"
+                                               Margin="18,0,0,0" VerticalAlignment="Center"
+                                               Opacity="0.65"
+                                               Foreground="{DynamicResource TocTextBrush}"/>
+                                    <TextBlock x:Name="Arrow" Grid.Column="3" Text="›"
+                                               Margin="12,0,0,0" Visibility="Collapsed"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TocTextBrush}"/>
+                                </Grid>
+                            </Border>
+                            <Popup x:Name="PART_Popup" Placement="Right"
+                                   IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                   AllowsTransparency="True" Focusable="False"
+                                   PopupAnimation="Fade" HorizontalOffset="-4" VerticalOffset="-4">
+                                <Border Background="{DynamicResource TocPanelBgBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush2}"
+                                        BorderThickness="1" CornerRadius="6" Padding="4"
+                                        Margin="0,0,10,10">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.35"/>
+                                    </Border.Effect>
+                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Role" Value="TopLevelHeader">
+                                <Setter TargetName="PART_Popup" Property="Placement" Value="Bottom"/>
+                                <Setter TargetName="PART_Popup" Property="HorizontalOffset" Value="0"/>
+                                <Setter TargetName="PART_Popup" Property="VerticalOffset" Value="2"/>
+                                <Setter Property="Padding" Value="12,6"/>
+                            </Trigger>
+                            <Trigger Property="Role" Value="SubmenuHeader">
+                                <Setter TargetName="Arrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSubmenuOpen" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ContextMenu">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource TocPanelBgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="4"
+                                Margin="0,0,10,10">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.35"/>
+                            </Border.Effect>
+                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===== Office 风格功能区：标签页 / 按钮 / 开关 / 分段按钮 ===== -->
+        <Style x:Key="RibbonTab" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Padding" Value="16,6"/>
+            <Setter Property="Margin" Value="0,0,2,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="Transparent"
+                                BorderBrush="Transparent" BorderThickness="0,0,0,2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3B82F6"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RibbonButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RibbonToggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="Transparent" BorderThickness="1"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush"
+                                        Value="{DynamicResource BorderBrush2}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RibbonRadio" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="Transparent" BorderThickness="1"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3B82F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RibbonLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource StatusTextBrush}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="8,0,4,0"/>
+        </Style>
+
+        <Style x:Key="RibbonSeparator" TargetType="Border">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Margin" Value="8,2"/>
+            <Setter Property="Background" Value="{DynamicResource BorderBrush2}"/>
+        </Style>
     </Window.Resources>
 
     <!-- 窗口级快捷键：Ctrl+S 保存、Ctrl+O 打开、F5 重新加载 -->
@@ -31,69 +280,147 @@
     </Window.CommandBindings>
 
     <DockPanel>
-        <!-- 菜单栏 -->
-        <Menu x:Name="MainMenu" DockPanel.Dock="Top"
-              Background="{DynamicResource ToolbarBgBrush}"
-              Foreground="{DynamicResource TocTextBrush}" Padding="2,0">
-            <MenuItem Header="文件(_F)">
-                <MenuItem Header="新建(_N)" Click="NewFile_Click" InputGestureText="Ctrl+N"/>
-                <MenuItem Header="打开(_O)..." Click="OpenFile_Click" InputGestureText="Ctrl+O"/>
-                <MenuItem Header="保存(_S)" Click="Save_Click" InputGestureText="Ctrl+S"/>
-                <MenuItem Header="另存为(_A)..." Click="SaveAs_Click"/>
-                <Separator/>
-                <MenuItem Header="重新加载(_R)" Click="Reload_Click" InputGestureText="F5"/>
-                <Separator/>
-                <MenuItem Header="退出(_X)" Click="Exit_Click" InputGestureText="Alt+F4"/>
-            </MenuItem>
-            <MenuItem Header="帮助(_H)">
-                <MenuItem Header="关于 MarkdownViewer(_A)..." Click="About_Click"/>
-            </MenuItem>
-        </Menu>
+        <!-- Office 风格功能区：标签栏 + 当前标签对应的工具栏 -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource ToolbarBgBrush}"
+                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Margin="6,3,6,0">
+                <RadioButton x:Name="RibbonFileTab" Content="文件" Tag="file" GroupName="RibbonTabs"
+                             IsChecked="True" Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+                <RadioButton x:Name="RibbonEditTab" Content="编辑" Tag="edit" GroupName="RibbonTabs"
+                             Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+                <RadioButton x:Name="RibbonViewTab" Content="视图" Tag="view" GroupName="RibbonTabs"
+                             Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+                <RadioButton x:Name="RibbonEncodingTab" Content="编码" Tag="encoding" GroupName="RibbonTabs"
+                             Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+                <RadioButton x:Name="RibbonHelpTab" Content="帮助" Tag="help" GroupName="RibbonTabs"
+                             Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+            </StackPanel>
+        </Border>
 
-        <!-- 顶部工具栏 -->
-        <ToolBarTray DockPanel.Dock="Top" Background="{DynamicResource ToolbarBgBrush}">
-            <ToolBar Background="{DynamicResource ToolbarBgBrush}"
-                     Foreground="{DynamicResource TocTextBrush}">
-                <Button Content="打开文件..." Click="OpenFile_Click" Padding="8,2"
-                        Foreground="{DynamicResource TocTextBrush}"/>
-                <Separator/>
-                <Button Content="重新加载" Click="Reload_Click" Padding="8,2"
-                        Foreground="{DynamicResource TocTextBrush}"/>
-                <Button Content="保存" Click="Save_Click" Padding="8,2"
-                        ToolTip="保存当前文档（Ctrl+S）"
-                        Foreground="{DynamicResource TocTextBrush}"/>
-                <Button Content="另存为..." Click="SaveAs_Click" Padding="8,2"
-                        Foreground="{DynamicResource TocTextBrush}"/>
-                <ToggleButton x:Name="TocToggle" Content="隐藏目录" IsChecked="True"
-                              Checked="TocToggle_Changed" Unchecked="TocToggle_Changed" Padding="8,2"
-                              Foreground="{DynamicResource TocTextBrush}"/>
-                <Separator/>
-                <TextBlock Text="视图：" VerticalAlignment="Center" Margin="6,0,2,0"/>
-                <RadioButton x:Name="ViewPreview" Content="预览" GroupName="ViewGroup"
-                             IsChecked="True" Margin="4,0" VerticalAlignment="Center"
-                             Foreground="{DynamicResource TocTextBrush}" Checked="View_Changed"/>
-                <RadioButton x:Name="ViewSplit" Content="分栏" GroupName="ViewGroup"
-                             Margin="4,0" VerticalAlignment="Center"
-                             Foreground="{DynamicResource TocTextBrush}" Checked="View_Changed"/>
-                <RadioButton x:Name="ViewEdit" Content="编辑" GroupName="ViewGroup"
-                             Margin="4,0" VerticalAlignment="Center"
-                             Foreground="{DynamicResource TocTextBrush}" Checked="View_Changed"/>
-                <Separator/>
-                <TextBlock Text="显示模式：" VerticalAlignment="Center" Margin="6,0,2,0"/>
-                <ComboBox x:Name="ThemeBox" Width="92" SelectedIndex="0"
-                          Foreground="{DynamicResource TocTextBrush}"
-                          Background="{DynamicResource TocPanelBgBrush}"
-                          SelectionChanged="ThemeBox_SelectionChanged">
-                    <ComboBoxItem Content="浅色"/>
-                    <ComboBoxItem Content="护眼绿"/>
-                    <ComboBoxItem Content="暗黑"/>
-                </ComboBox>
-                <Separator/>
-                <TextBlock x:Name="StatusText" Margin="8,0" VerticalAlignment="Center"
-                           Foreground="{DynamicResource StatusTextBrush}"
-                           Text="将 .md 文件拖入窗口，或点击「打开文件」（支持命令行参数）"/>
-            </ToolBar>
-        </ToolBarTray>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource TocPanelBgBrush}"
+                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,0,0,1"
+                Padding="6,4" MinHeight="40">
+            <Grid>
+                <!-- 文件 -->
+                <WrapPanel x:Name="RibbonFilePanel" Orientation="Horizontal">
+                    <Button Style="{StaticResource RibbonButton}" Content="新建"
+                            Click="NewFile_Click" ToolTip="Ctrl+N"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="打开..."
+                            Click="OpenFile_Click" ToolTip="Ctrl+O"/>
+                    <Menu Background="Transparent" BorderThickness="0" Padding="0"
+                          VerticalAlignment="Center" Foreground="{DynamicResource TocTextBrush}">
+                        <MenuItem x:Name="RecentMenu" Header="最近打开 ▾" Padding="10,5"/>
+                    </Menu>
+                    <Button Style="{StaticResource RibbonButton}" Content="文件夹搜索"
+                            Click="SearchInFolder_Click" ToolTip="Ctrl+Shift+F"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="保存"
+                            Click="Save_Click" ToolTip="Ctrl+S"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="另存为..."
+                            Click="SaveAs_Click" ToolTip="Ctrl+Shift+S"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="重新加载"
+                            Click="Reload_Click" ToolTip="F5"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="导出 HTML"
+                            Click="ExportHtml_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="导出 PDF"
+                            Click="ExportPdf_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="打印"
+                            Click="Print_Click" ToolTip="Ctrl+P"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="关闭标签"
+                            Click="CloseCurrentTab_Click" ToolTip="Ctrl+W"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="退出"
+                            Click="Exit_Click"/>
+                </WrapPanel>
+
+                <!-- 编辑 -->
+                <WrapPanel x:Name="RibbonEditPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Style="{StaticResource RibbonButton}" Content="查找 / 替换"
+                            Click="Find_Click" ToolTip="Ctrl+F"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="查找下一个"
+                            Click="FindNext_Click" ToolTip="F3"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="插入图片..."
+                            Click="InsertImage_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="插入表格"
+                            Click="InsertTable_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="插入代码块"
+                            Click="InsertCodeBlock_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="插入任务列表"
+                            Click="InsertTaskList_Click"/>
+                </WrapPanel>
+
+                <!-- 视图 -->
+                <WrapPanel x:Name="RibbonViewPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <TextBlock Text="视图：" Style="{StaticResource RibbonLabel}"/>
+                    <RadioButton x:Name="ViewPreview" Content="预览" GroupName="ViewGroup"
+                                 IsChecked="True" Style="{StaticResource RibbonRadio}"
+                                 Checked="View_Changed"/>
+                    <RadioButton x:Name="ViewSplit" Content="分栏" GroupName="ViewGroup"
+                                 Style="{StaticResource RibbonRadio}" Checked="View_Changed"/>
+                    <RadioButton x:Name="ViewEdit" Content="编辑" GroupName="ViewGroup"
+                                 Style="{StaticResource RibbonRadio}" Checked="View_Changed"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <ToggleButton x:Name="TocToggle" Content="隐藏目录" IsChecked="True"
+                                  Style="{StaticResource RibbonToggle}"
+                                  Checked="TocToggle_Changed" Unchecked="TocToggle_Changed"/>
+                    <ToggleButton x:Name="TypewriterToggle" Content="打字机模式"
+                                  Style="{StaticResource RibbonToggle}"
+                                  Click="TypewriterToggle_Click"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="放大"
+                            Click="ZoomIn_Click" ToolTip="Ctrl+="/>
+                    <Button Style="{StaticResource RibbonButton}" Content="缩小"
+                            Click="ZoomOut_Click" ToolTip="Ctrl+-"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="重置"
+                            Click="ZoomReset_Click" ToolTip="Ctrl+0"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="全屏"
+                            Click="FullScreen_Click" ToolTip="F11"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <TextBlock Text="显示模式：" Style="{StaticResource RibbonLabel}"/>
+                    <RadioButton x:Name="ThemeLightRadio" Content="浅色" Tag="light"
+                                 GroupName="ThemeGroup" Style="{StaticResource RibbonRadio}"
+                                 Checked="ThemeRadio_Checked"/>
+                    <RadioButton x:Name="ThemeGreenRadio" Content="护眼绿" Tag="green"
+                                 GroupName="ThemeGroup" Style="{StaticResource RibbonRadio}"
+                                 Checked="ThemeRadio_Checked"/>
+                    <RadioButton x:Name="ThemeDarkRadio" Content="暗黑" Tag="dark"
+                                 GroupName="ThemeGroup" Style="{StaticResource RibbonRadio}"
+                                 Checked="ThemeRadio_Checked"/>
+                    <RadioButton x:Name="ThemeSystemRadio" Content="跟随系统" Tag="system"
+                                 GroupName="ThemeGroup" Style="{StaticResource RibbonRadio}"
+                                 Checked="ThemeRadio_Checked"/>
+                </WrapPanel>
+
+                <!-- 编码 -->
+                <WrapPanel x:Name="RibbonEncodingPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Style="{StaticResource RibbonButton}" Content="UTF-8"
+                            Tag="Utf8NoBom" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="UTF-8 (BOM)"
+                            Tag="Utf8Bom" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="UTF-16 LE"
+                            Tag="Utf16LE" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="UTF-16 BE"
+                            Tag="Utf16BE" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="GB18030"
+                            Tag="Gb18030" Click="EncodingMenu_Click"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="按当前编码重新读取"
+                            Click="ReloadWithEncoding_Click"/>
+                </WrapPanel>
+
+                <!-- 帮助 -->
+                <WrapPanel x:Name="RibbonHelpPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Style="{StaticResource RibbonButton}" Content="快捷键"
+                            Click="Shortcuts_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="打开日志目录"
+                            Click="OpenLogDir_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="关于 MarkdownViewer"
+                            Click="About_Click"/>
+                </WrapPanel>
+            </Grid>
+        </Border>
 
         <!-- 多标签页：每个标签对应一个打开的 md 文档；彩色圆角，支持双击弹出独立窗口 -->
         <Grid DockPanel.Dock="Top">
@@ -143,6 +470,17 @@
                     <DataTemplate>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
                                     MouseLeftButtonDown="TabHeader_MouseDown">
+                            <StackPanel.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="关闭" Click="TabMenu_Close"/>
+                                    <MenuItem Header="关闭其他" Click="TabMenu_CloseOthers"/>
+                                    <MenuItem Header="关闭右侧" Click="TabMenu_CloseRight"/>
+                                    <Separator/>
+                                    <MenuItem Header="复制完整路径" Click="TabMenu_CopyPath"/>
+                                    <MenuItem Header="在资源管理器中显示" Click="TabMenu_Reveal"/>
+                                    <MenuItem Header="重新加载" Click="TabMenu_Reload"/>
+                                </ContextMenu>
+                            </StackPanel.ContextMenu>
                             <TextBlock Text="{Binding Title}" Margin="0,0,6,0"
                                        VerticalAlignment="Center"/>
                             <Button Content="✕" Width="16" Height="16" FontSize="9" Padding="0"
@@ -164,6 +502,16 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
         </Grid>
+
+        <!-- 底部状态栏：切换功能区标签时始终可见 -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource ToolbarBgBrush}"
+                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="0,1,0,0"
+                Padding="10,4">
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource StatusTextBrush}"
+                       Text="将 .md 文件拖入窗口，或点击「打开」（支持命令行参数）"/>
+        </Border>
 
         <Grid>
             <Grid.ColumnDefinitions>

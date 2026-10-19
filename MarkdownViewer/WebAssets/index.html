@@ -8,6 +8,8 @@
          否则其自带的 .CodeMirror{height:300px} 会覆盖编辑器的全高布局 -->
     <link rel="stylesheet" href="vendor/codemirror/codemirror.min.css"/>
     <link rel="stylesheet" href="css/style.css"/>
+    <!-- 查找栏 / 语法高亮 / 灯箱 / 打印样式 -->
+    <link rel="stylesheet" href="css/code-and-find.css"/>
 </head>
 <body>
 <div id="workbench" class="view-preview">
@@ -32,10 +34,31 @@
                     <li>支持命令行参数：<code>MarkdownViewer.exe 文档.md</code></li>
                     <li>支持 GFM 表格、任务列表、代码块、相对路径图片</li>
                     <li>菜单「帮助 → 关于 MarkdownViewer」可查看版本、作者与开源协议</li>
+                    <li><code>Ctrl+F</code> 查找 / 替换，<code>Ctrl+滚轮</code> 或 <code>Ctrl+=</code> 缩放</li>
+                    <li>工具栏可导出 PDF / HTML、打印，粘贴图片自动保存到 <code>assets</code></li>
                 </ul>
             </div>
         </div>
     </div>
+</div>
+
+<!-- 查找 / 替换栏（Ctrl+F） -->
+<div id="find-bar" class="find-bar" hidden>
+    <input id="find-input" type="text" autocomplete="off" spellcheck="false"
+           placeholder="查找内容（Enter 下一个，Shift+Enter 上一个）"/>
+    <span id="find-count" class="find-count">0/0</span>
+    <button id="find-prev" type="button" title="上一个（Shift+Enter）">↑</button>
+    <button id="find-next" type="button" title="下一个（Enter）">↓</button>
+    <span class="find-sep"></span>
+    <input id="replace-input" type="text" autocomplete="off" spellcheck="false" placeholder="替换为"/>
+    <button id="replace-one" type="button" title="替换当前">替换</button>
+    <button id="replace-all" type="button" title="全部替换">全部</button>
+    <button id="find-close" type="button" title="关闭（Esc）">✕</button>
+</div>
+
+<!-- 图片灯箱 -->
+<div id="lightbox" class="lightbox" hidden>
+    <img id="lightbox-img" alt="图片预览"/>
 </div>
 
 <script src="vendor/codemirror/codemirror.min.js"></script>

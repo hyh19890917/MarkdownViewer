@@ -9,18 +9,18 @@
     <AssemblyName>MarkdownViewer</AssemblyName>
     <RootNamespace>MarkdownViewer</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>MarkdownViewer</Product>
     <Authors>tobegmup</Authors>
     <Company>tobegmup</Company>
     <Copyright>Copyright © 2026 tobegmup</Copyright>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- WebView2 内核（Chromium） -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
+    <!-- WebView2 内核（Chromium）；固定版本保证构建可复现 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <!-- GB2312/GB18030 等旧编码支持 -->
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>

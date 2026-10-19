@@ -17,6 +17,9 @@ tmp_*
 *.WebView2/
 **/*.WebView2/
 
+# ---------- 运行时数据（设置/日志/WebView2 缓存） ----------
+userdata/
+
 # ---------- Python（临时调试脚本） ----------
 .venv/
 venv/

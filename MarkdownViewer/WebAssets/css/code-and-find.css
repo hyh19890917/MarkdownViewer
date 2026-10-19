@@ -1,0 +1,189 @@
+/* ===================== 可配置字号 / 阅读宽度 ===================== */
+/* 原生控件（滚动条、表单）跟随深浅色 */
+:root { color-scheme: light; }
+body.theme-dark { color-scheme: dark; }
+body.theme-light, body.theme-green { color-scheme: light; }
+
+/* 由 C# 的「缩放」设置通过 CSS 变量注入（默认 16px / 14.5px） */
+:root {
+    --preview-font-size: 16px;
+    --editor-font-size: 14.5px;
+    --content-width: 920px;
+}
+
+.markdown-body {
+    max-width: var(--content-width);
+    font-size: var(--preview-font-size);
+}
+
+.CodeMirror {
+    font-size: var(--editor-font-size);
+}
+
+/* ===================== 查找 / 替换栏 ===================== */
+.find-bar {
+    position: fixed;
+    top: 10px;
+    right: 18px;
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: #ffffff;
+    border: 1px solid #d0d7de;
+    box-shadow: 0 6px 24px rgba(27, 31, 36, 0.18);
+    font-size: 13px;
+}
+
+.find-bar[hidden] { display: none; }
+
+.find-bar input {
+    width: 190px;
+    padding: 4px 8px;
+    font-size: 13px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    outline: none;
+    background: #ffffff;
+    color: #1f2328;
+}
+
+.find-bar input:focus { border-color: #0969da; box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.2); }
+
+.find-bar button {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 8px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: #f6f8fa;
+    color: #24292f;
+}
+
+.find-bar button:hover { background: #eaeef2; }
+.find-count { min-width: 52px; text-align: center; color: #57606a; }
+.find-sep { width: 1px; height: 18px; background: #d0d7de; }
+
+body.theme-green .find-bar { background: #e7f6e8; border-color: #93c59c; }
+body.theme-green .find-bar input { background: #f4fbf4; border-color: #93c59c; color: #233423; }
+body.theme-green .find-bar button { background: #d6efd8; border-color: #93c59c; color: #233423; }
+body.theme-green .find-count { color: #3d5a40; }
+body.theme-green .find-sep { background: #93c59c; }
+
+body.theme-dark .find-bar { background: #2d2d30; border-color: #3c3c3c; }
+body.theme-dark .find-bar input { background: #1e1e1e; border-color: #3c3c3c; color: #d4d4d4; }
+body.theme-dark .find-bar button { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
+body.theme-dark .find-bar button:hover { background: #44444c; }
+body.theme-dark .find-count { color: #9da5b4; }
+body.theme-dark .find-sep { background: #3c3c3c; }
+
+/* 查找命中高亮（编辑器 markText 与预览 mark 共用） */
+mark.find-hit,
+.CodeMirror .find-hit {
+    background: #ffe58f;
+    color: inherit;
+    padding: 0;
+    border-radius: 2px;
+}
+
+mark.find-hit-current,
+.CodeMirror .find-hit-current {
+    background: #ffa940;
+    box-shadow: 0 0 0 1px #d46b08 inset;
+}
+
+body.theme-green mark.find-hit,
+body.theme-green .CodeMirror .find-hit { background: #b7e3bd; }
+body.theme-green mark.find-hit-current,
+body.theme-green .CodeMirror .find-hit-current { background: #f6c84c; }
+
+body.theme-dark mark.find-hit,
+body.theme-dark .CodeMirror .find-hit { background: #5a4d1f; }
+body.theme-dark mark.find-hit-current,
+body.theme-dark .CodeMirror .find-hit-current { background: #8a6d1f; }
+
+/* ===================== 代码块：复制按钮 + 语法高亮 ===================== */
+pre.code-block { position: relative; }
+
+.copy-code {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 18px;
+    color: #24292f;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+pre.code-block:hover .copy-code { opacity: 1; }
+.copy-code:hover { background: #ffffff; }
+
+body.theme-green .copy-code { background: rgba(231, 246, 232, 0.9); border-color: #93c59c; color: #233423; }
+body.theme-dark .copy-code { background: rgba(45, 45, 48, 0.9); border-color: #3c3c3c; color: #e6edf3; }
+
+/* 语法高亮配色（浅色） */
+.tok-com { color: #6a737d; font-style: italic; }
+.tok-str { color: #0a7d33; }
+.tok-num { color: #0550ae; }
+.tok-kw { color: #cf222e; }
+.tok-fn { color: #8250df; }
+.tok-type { color: #953800; }
+.tok-punc { color: #57606a; }
+
+body.theme-green .tok-com { color: #4a6b52; }
+body.theme-green .tok-str { color: #175c36; }
+body.theme-green .tok-num { color: #1b6b33; }
+body.theme-green .tok-kw { color: #9b2c2c; }
+body.theme-green .tok-fn { color: #6b21a8; }
+body.theme-green .tok-type { color: #8a4b0f; }
+body.theme-green .tok-punc { color: #3d5a40; }
+
+body.theme-dark .tok-com { color: #6a9955; }
+body.theme-dark .tok-str { color: #ce9178; }
+body.theme-dark .tok-num { color: #b5cea8; }
+body.theme-dark .tok-kw { color: #569cd6; }
+body.theme-dark .tok-fn { color: #dcdcaa; }
+body.theme-dark .tok-type { color: #4ec9b0; }
+body.theme-dark .tok-punc { color: #9da5b4; }
+
+/* ===================== 图片灯箱 ===================== */
+.lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.86);
+    cursor: zoom-out;
+}
+
+.lightbox[hidden] { display: none; }
+
+.lightbox img {
+    max-width: 94vw;
+    max-height: 92vh;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    background: #ffffff;
+}
+
+.markdown-body img { cursor: zoom-in; }
+
+/* ===================== 打印 / 导出 PDF ===================== */
+@media print {
+    html, body { height: auto; overflow: visible; background: #ffffff; }
+    #editor-pane, #edit-splitter, .find-bar, .lightbox, .copy-code { display: none !important; }
+    #workbench { display: block; height: auto; }
+    #preview-pane { display: block !important; overflow: visible; height: auto; }
+    .markdown-body { max-width: none; padding: 0; }
+}

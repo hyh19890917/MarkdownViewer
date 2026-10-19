@@ -15,19 +15,166 @@
     var editorPane = document.getElementById("editor-pane");
     var workbench = document.getElementById("workbench");
 
+    /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
+    var codeSnippets = [];
+
+    function escapeHtml(text) {
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    var LANG_CONF = {
+        js: {
+            slash: true,
+            kw: "await async break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield null true false undefined"
+        },
+        ts: {
+            slash: true,
+            kw: "abstract any as async await boolean break case catch class const constructor continue declare default delete do else enum export extends false finally for from function get if implements import in infer instanceof interface is keyof let namespace never new null number object of private protected public readonly record return set static string super switch this throw true try type typeof undefined unique unknown var void while yield"
+        },
+        csharp: {
+            slash: true,
+            kw: "abstract as async await base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach get goto if implicit in init int interface internal is lock long namespace new null object operator out override params partial private protected public readonly record ref return sbyte sealed set short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile while yield nameof"
+        },
+        java: {
+            slash: true,
+            kw: "abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for if implements import instanceof int interface long native new null package private protected public return short static strictfp super switch synchronized this throw throws transient true false try void volatile while var record"
+        },
+        python: {
+            hash: true,
+            kw: "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield match case self"
+        },
+        bash: {
+            hash: true,
+            kw: "if then else elif fi for while until do done case esac function in return exit export local readonly declare echo cd set unset source alias sudo"
+        },
+        powershell: {
+            hash: true,
+            kw: "function param if else elseif foreach for while do switch return try catch finally throw true false null begin process end filter in not and or"
+        },
+        sql: {
+            dash: true,
+            kw: "select from where insert into values update set delete create table alter drop index view join left right inner outer full on group by order having limit offset union all distinct as and or not null is like between in exists count sum avg min max case when then else end primary key foreign references default"
+        },
+        json: { slash: true, kw: "true false null" },
+        yaml: { hash: true, kw: "true false null yes no on off" },
+        go: {
+            slash: true,
+            kw: "package import func var const type struct interface map chan go defer select case switch default if else for range break continue return nil true false make new len cap append copy delete panic recover"
+        },
+        rust: {
+            slash: true,
+            kw: "fn let mut pub use mod struct enum impl trait for while loop if else match return self Self crate super as dyn ref move async await unsafe const static type where some none ok err true false"
+        },
+        cpp: {
+            slash: true,
+            kw: "auto bool break case catch char class const constexpr continue default delete do double else enum explicit extern false float for friend if inline int long namespace new nullptr operator private protected public return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while include define ifndef endif"
+        },
+        php: {
+            slash: true,
+            hash: true,
+            kw: "abstract and array as break callable case catch class clone const continue declare default do echo else elseif empty enddeclare endfor endforeach endif endswitch endwhile extends final finally fn for foreach function global if implements include include_once instanceof insteadof interface isset list match namespace new null or print private protected public readonly require require_once return static switch throw trait true false try unset use var while xor yield"
+        },
+        css: { slash: true, kw: "" },
+        html: { html: true, kw: "" },
+        xml: { html: true, kw: "" },
+        text: null
+    };
+
+    var LANG_ALIASES = {
+        javascript: "js", jsx: "js", mjs: "js", cjs: "js", node: "js",
+        typescript: "ts", tsx: "ts",
+        "c#": "csharp", cs: "csharp", dotnet: "csharp",
+        py: "python", python3: "python",
+        sh: "bash", shell: "bash", zsh: "bash", console: "bash",
+        ps1: "powershell", pwsh: "powershell", ps: "powershell",
+        yml: "yaml",
+        "c++": "cpp", cxx: "cpp", c: "cpp", h: "cpp", hpp: "cpp",
+        jsonc: "json", json5: "json",
+        htm: "html", xhtml: "html", svg: "xml", vue: "html",
+        plaintext: "text", txt: "text", "": "text"
+    };
+
+    function normalizeLang(lang) {
+        var key = (lang || "").toLowerCase().trim();
+        return LANG_ALIASES[key] || key;
+    }
+
+    function buildTokenRegex(conf) {
+        var comments = [];
+        if (conf.slash) {
+            comments.push("\\/\\*[\\s\\S]*?\\*\\/");
+            comments.push("\\/\\/[^\\n]*");
+        }
+        if (conf.hash) comments.push("#[^\\n]*");
+        if (conf.dash) comments.push("--[^\\n]*");
+        if (conf.html) comments.push("<!--[\\s\\S]*?-->");
+        if (!comments.length) comments.push("\\u0000never\\u0000");
+        return new RegExp(
+            "(" + comments.join("|") + ")" +
+            "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`)" +
+            "|(\\b0[xX][0-9a-fA-F]+\\b|\\b\\d+(?:\\.\\d+)?\\b)" +
+            "|([A-Za-z_$][\\w$]*)",
+            "g");
+    }
+
+    function highlightCode(code, lang) {
+        var key = normalizeLang(lang);
+        var conf = LANG_CONF[key];
+        if (!conf) return escapeHtml(code);
+
+        var kw = {};
+        var kwList = (conf.kw || "").split(" ");
+        for (var i = 0; i < kwList.length; i++) {
+            if (kwList[i]) kw[kwList[i]] = true;
+        }
+
+        var re = buildTokenRegex(conf);
+        var out = "";
+        var last = 0;
+        var m;
+        while ((m = re.exec(code)) !== null) {
+            out += escapeHtml(code.slice(last, m.index));
+            last = re.lastIndex;
+
+            var cls = null;
+            if (m[1]) {
+                cls = "tok-com";
+            } else if (m[2]) {
+                cls = "tok-str";
+            } else if (m[3]) {
+                cls = "tok-num";
+            } else if (m[4]) {
+                var word = m[4];
+                if (kw[word]) cls = "tok-kw";
+                else if (/^[A-Z]/.test(word)) cls = "tok-type";
+                else if (/^\s*\(/.test(code.slice(re.lastIndex, re.lastIndex + 8))) cls = "tok-fn";
+            }
+
+            out += cls
+                ? '<span class="' + cls + '">' + escapeHtml(m[0]) + "</span>"
+                : escapeHtml(m[0]);
+        }
+        out += escapeHtml(code.slice(last));
+        return out;
+    }
+
     var md = window.markdownit({
         html: false,
         linkify: true,
         typographer: true,
         breaks: false,
         highlight: function (code, lang) {
-            var esc = code
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;");
-            return '<pre class="code-block"><code class="language-' +
-                (lang || "") + '">' + esc + "</code></pre>";
+            var key = normalizeLang(lang);
+            var body = highlightCode(code, lang);
+            var idx = codeSnippets.push(code) - 1;
+            // 必须以 <pre 开头，markdown-it 才会原样使用（不再包一层 pre/code）
+            return '<pre class="code-block"><button type="button" class="copy-code" data-code="' +
+                idx + '" title="复制代码">复制</button><code class="language-' +
+                escapeHtml(key) + '">' + body + "</code></pre>";
         }
     });
 
@@ -70,10 +217,14 @@
         var srcIndex = token.attrIndex("src");
         if (srcIndex >= 0) {
             var src = token.attrs[srcIndex][1] || "";
-            if (src && !/^([a-z][a-z0-9+.-]*:)?\/\//i.test(src) &&
-                src.indexOf("data:") !== 0 && src.indexOf("//") !== 0) {
+            // 绝对路径（C:\xxx、\\server\share）无法通过 mdfile.local 虚拟主机访问，保持原样
+            var isAbsolute = /^[a-zA-Z]:[\\/]/.test(src) || src.indexOf("\\\\") === 0;
+            if (src && !isAbsolute &&
+                !/^[a-z][a-z0-9+.-]*:/i.test(src) && src.indexOf("//") !== 0) {
                 var rel = src.replace(/^\.\//, "").replace(/\\/g, "/");
-                token.attrs[srcIndex][1] = "https://mdfile.local/" + encodeURI(rel);
+                // encodeURI 不会转义 # 和 ?，文件名包含它们时需要手动转义，否则会被当作锚点/查询串
+                var encoded = encodeURI(rel).replace(/#/g, "%23").replace(/\?/g, "%3F");
+                token.attrs[srcIndex][1] = "https://mdfile.local/" + encoded;
             }
         }
         return defaultImageRender(tokens, idx, options, env, self);
@@ -113,7 +264,8 @@
 
     /* ===================== 多标签编辑缓冲区 ===================== */
     var currentTabId = null;
-    var buffers = {};           // tabId -> { text, dirty, editScroll, cursor, previewScroll }
+    var buffers = {};           // tabId -> { text, dirty, savedText, editScroll, cursor, previewScroll }
+    var renderedTabId = null;   // 当前 DOM 里渲染的是哪个标签（用于跳过重复渲染）
     var viewMode = "preview";
     var headingLines = {};      // 标题 id -> 源码行号（供编辑模式 TOC 跳转）
     var headingList = [];       // [{ id, line }]，按文档顺序，供编辑区滚动联动
@@ -154,9 +306,11 @@
         var b = buffers[currentTabId];
         if (!b) return;
         b.text = cm.getValue();
-        if (!b.dirty) {
-            b.dirty = true;
-            postMessage({ type: "dirty", tabId: currentTabId, dirty: true });
+        // 与最后一次保存的内容比较：撤销回到原样时自动清除「未保存」标记
+        var dirty = b.savedText === null ? true : b.text !== b.savedText;
+        if (dirty !== b.dirty) {
+            b.dirty = dirty;
+            postMessage({ type: "dirty", tabId: currentTabId, dirty: dirty });
         }
         scheduleRender();
     });
@@ -179,6 +333,12 @@
         activeDriver = "editor";
         lastCursorMoveAt = Date.now();
         scheduleEditorSpy(true);
+        // 打字机模式：让光标行始终居中
+        if (typewriter && viewMode !== "preview") {
+            var info = cm.getScrollInfo();
+            var y = cm.heightAtLine(cm.getCursor().line, "local");
+            followEditorTo(Math.max(0, y - info.clientHeight / 2));
+        }
     });
 
     function postMessage(obj) {
@@ -199,6 +359,14 @@
 
     /* ===================== 渲染 ===================== */
     function renderMarkdown(source, tabId, restoreScroll) {
+        // 内容与标签都没变时不重建 DOM（避免打字时整篇重排、滚动跳动）
+        var existing = buffers[tabId];
+        if (renderedTabId === tabId && existing && existing.renderedText === source) {
+            return;
+        }
+        renderedTabId = tabId;
+        if (existing) existing.renderedText = source;
+
         var tokens = md.parse(source, {});
         var used = {};
         var toc = [];
@@ -222,6 +390,12 @@
 
         var html = md.renderer.render(tokens, md.options, {});
         document.getElementById("md-body").innerHTML = html;
+
+        // 重新渲染后旧的查找高亮已随 innerHTML 丢失，重新计算
+        findState.previewMarks = [];
+        if (findState.open && findState.term) {
+            runFind(findState.term, true);
+        }
 
         // 回传目录给 WPF 侧边栏（带上标签 id）
         postMessage({ type: "toc", tabId: tabId, items: toc });
@@ -257,6 +431,60 @@
         if (!b) return JSON.stringify({ text: null, dirty: false });
         if (tabId === currentTabId) b.text = cm.getValue();
         return JSON.stringify({ text: b.text, dirty: b.dirty });
+    };
+
+    /* 供 C# 保存会话：文本 + 滚动位置 + 光标 */
+    window.getTabSnapshot = function (tabId) {
+        var b = buffers[tabId];
+        if (!b) {
+            return JSON.stringify({
+                text: null, dirty: false, previewScroll: 0,
+                editorScroll: 0, cursorLine: 0, cursorCh: 0
+            });
+        }
+        var isCurrent = tabId === currentTabId;
+        if (isCurrent) b.text = cm.getValue();
+        var cursor = isCurrent ? cm.getCursor() : (b.cursor || { line: 0, ch: 0 });
+        var info = isCurrent ? cm.getScrollInfo() : null;
+        return JSON.stringify({
+            text: b.text,
+            dirty: b.dirty,
+            previewScroll: b.previewScroll || 0,
+            editorScroll: info ? info.top : (b.editScroll ? b.editScroll.top : 0),
+            cursorLine: cursor.line || 0,
+            cursorCh: cursor.ch || 0
+        });
+    };
+
+    window.getUiState = function () {
+        return JSON.stringify({ splitRatio: splitRatio, viewMode: viewMode });
+    };
+
+    /* 导出当前预览为独立 HTML（内联样式，文件自带主题） */
+    window.buildExportHtml = function (title) {
+        return Promise.all([
+            fetch("css/style.css").then(function (r) { return r.text(); }),
+            fetch("css/code-and-find.css").then(function (r) { return r.text(); })
+        ]).then(function (parts) {
+            var body = document.getElementById("md-body").cloneNode(true);
+            body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
+            body.querySelectorAll("mark.find-hit").forEach(function (m) {
+                m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+            });
+            var dark = document.body.classList.contains("theme-dark");
+            var green = document.body.classList.contains("theme-green");
+            var themeClass = dark ? "theme-dark" : green ? "theme-green" : "theme-light";
+            var overrides =
+                "html,body{height:auto;overflow:auto;margin:0;background:" +
+                (dark ? "#1E1E1E" : green ? "#C7EDCC" : "#ffffff") + "}" +
+                ".markdown-body{max-width:920px;margin:0 auto;padding:32px 40px 80px}" +
+                "#workbench,#editor-pane,#edit-splitter,#preview-pane{display:none!important}";
+            return "<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/>" +
+                "<title>" + escapeHtml(title || "MarkdownViewer") + "</title><style>\n" +
+                parts[0] + "\n" + parts[1] + "\n" + overrides +
+                "\n</style></head><body class=\"" + themeClass + "\">" +
+                body.outerHTML + "</body></html>";
+        });
     };
 
     /* 滚动联动：当前可见标题高亮（root 为预览面板） */
@@ -494,7 +722,15 @@
             try { anchor = decodeURIComponent(anchor); } catch (err) { /* 保持原样 */ }
             var target = document.getElementById(anchor) ||
                 document.getElementById(href.substring(1));
-            if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (target) {
+                // 与目录点击保持一致：平滑滚动，并把目录高亮同步到目标章节
+                lastActiveId = target.id;
+                previewSpySilentUntil = Date.now() + 600;
+                var paneTop = previewPane.getBoundingClientRect().top;
+                var offset = target.getBoundingClientRect().top - paneTop + previewPane.scrollTop;
+                followPreviewTo(Math.max(0, offset - 16));
+                postMessage({ type: "active", id: target.id, tabId: currentTabId });
+            }
             return;
         }
 
@@ -504,6 +740,351 @@
         e.preventDefault();
         postMessage({ type: "openLink", tabId: currentTabId, href: href });
     });
+
+    /* ===================== 查找 / 替换 ===================== */
+    var findBar = document.getElementById("find-bar");
+    var findInput = document.getElementById("find-input");
+    var replaceInput = document.getElementById("replace-input");
+    var findCount = document.getElementById("find-count");
+    var findSep = findBar.querySelector(".find-sep");
+    var replaceOneBtn = document.getElementById("replace-one");
+    var replaceAllBtn = document.getElementById("replace-all");
+    var MAX_FIND = 2000;
+
+    var findState = {
+        open: false,
+        term: "",
+        matches: [],       // [{ from, to }] 源码索引
+        index: -1,
+        editorMarks: [],
+        previewMarks: []
+    };
+
+    function openFindBar(mode) {
+        findBar.hidden = false;
+        findState.open = true;
+        var replaceMode = mode === "replace";
+        var display = replaceMode ? "" : "none";
+        replaceInput.style.display = display;
+        replaceOneBtn.style.display = display;
+        replaceAllBtn.style.display = display;
+        findSep.style.display = display;
+        findInput.focus();
+        findInput.select();
+        if (findInput.value) runFind(findInput.value, true);
+    }
+
+    function closeFindBar() {
+        findBar.hidden = true;
+        findState.open = false;
+        findState.matches = [];
+        findState.index = -1;
+        findCount.textContent = "0/0";
+        clearEditorMarks();
+        clearPreviewMarks();
+        if (viewMode !== "preview") cm.focus();
+    }
+
+    function clearEditorMarks() {
+        findState.editorMarks.forEach(function (m) {
+            try { m.clear(); } catch (e) { /* 文档已变化时忽略 */ }
+        });
+        findState.editorMarks = [];
+    }
+
+    function clearPreviewMarks() {
+        var marks = document.querySelectorAll("#md-body mark.find-hit");
+        for (var i = 0; i < marks.length; i++) {
+            var mark = marks[i];
+            var parent = mark.parentNode;
+            if (!parent) continue;
+            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+            parent.removeChild(mark);
+            parent.normalize();
+        }
+        findState.previewMarks = [];
+    }
+
+    function collectMatches(term) {
+        var result = [];
+        if (!term) return result;
+        var text = cm.getValue();
+        var lower = text.toLowerCase();
+        var needle = term.toLowerCase();
+        var at = 0;
+        while (result.length < MAX_FIND) {
+            var idx = lower.indexOf(needle, at);
+            if (idx < 0) break;
+            result.push({ from: idx, to: idx + term.length });
+            at = idx + Math.max(1, term.length);
+        }
+        return result;
+    }
+
+    function paintEditorMarks() {
+        clearEditorMarks();
+        findState.matches.forEach(function (m, i) {
+            var cls = i === findState.index ? "find-hit find-hit-current" : "find-hit";
+            findState.editorMarks.push(cm.markText(
+                cm.posFromIndex(m.from), cm.posFromIndex(m.to), { className: cls }));
+        });
+    }
+
+    function paintPreviewMarks(term) {
+        clearPreviewMarks();
+        if (!term || viewMode === "edit") return;
+
+        var root = document.getElementById("md-body");
+        var needle = term.toLowerCase();
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (node) {
+                var value = node.nodeValue;
+                if (!value || value.toLowerCase().indexOf(needle) < 0) return NodeFilter.FILTER_REJECT;
+                var parent = node.parentNode;
+                if (!parent) return NodeFilter.FILTER_REJECT;
+                var tag = parent.nodeName;
+                if (tag === "SCRIPT" || tag === "STYLE" || tag === "BUTTON") return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+
+        var nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+
+        nodes.forEach(function (node) {
+            var text = node.nodeValue;
+            var lower = text.toLowerCase();
+            var frag = document.createDocumentFragment();
+            var pos = 0;
+            var at;
+            while ((at = lower.indexOf(needle, pos)) >= 0) {
+                if (at > pos) frag.appendChild(document.createTextNode(text.slice(pos, at)));
+                var mark = document.createElement("mark");
+                mark.className = "find-hit";
+                mark.textContent = text.slice(at, at + term.length);
+                frag.appendChild(mark);
+                findState.previewMarks.push(mark);
+                pos = at + term.length;
+            }
+            if (!frag.childNodes.length) return;
+            if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+            node.parentNode.replaceChild(frag, node);
+        });
+    }
+
+    function markCurrentPreview() {
+        findState.previewMarks.forEach(function (m) { m.classList.remove("find-hit-current"); });
+        var current = findState.previewMarks[findState.index];
+        if (current) current.classList.add("find-hit-current");
+    }
+
+    function updateFindCount() {
+        var total = findState.matches.length;
+        var suffix = total >= MAX_FIND ? "+" : "";
+        findCount.textContent = total
+            ? (findState.index + 1) + "/" + total + suffix
+            : "0/0";
+    }
+
+    function scrollToMatch() {
+        var match = findState.matches[findState.index];
+        if (!match) return;
+
+        if (viewMode !== "preview") {
+            var pos = cm.posFromIndex(match.from);
+            cm.scrollIntoView({ line: pos.line, ch: pos.ch }, 120);
+        }
+        if (viewMode !== "edit" && findState.previewMarks.length) {
+            var mark = findState.previewMarks[
+                Math.min(findState.index, findState.previewMarks.length - 1)];
+            if (mark) {
+                var paneTop = previewPane.getBoundingClientRect().top;
+                var offset = mark.getBoundingClientRect().top - paneTop + previewPane.scrollTop;
+                followPreviewTo(Math.max(0, offset - previewPane.clientHeight * 0.3));
+            }
+        }
+        markCurrentPreview();
+    }
+
+    function runFind(term, keepIndex) {
+        findState.term = term || "";
+        var previous = findState.index;
+        findState.matches = collectMatches(findState.term);
+        if (!findState.matches.length) {
+            findState.index = -1;
+        } else if (keepIndex) {
+            findState.index = Math.min(Math.max(previous, 0), findState.matches.length - 1);
+        } else {
+            findState.index = 0;
+        }
+        paintEditorMarks();
+        paintPreviewMarks(findState.term);
+        updateFindCount();
+        if (findState.index >= 0) scrollToMatch();
+    }
+
+    function findNext(delta) {
+        if (!findState.matches.length) {
+            if (findInput.value) runFind(findInput.value, false);
+            return;
+        }
+        var n = findState.matches.length;
+        findState.index = ((findState.index + delta) % n + n) % n;
+        paintEditorMarks();
+        updateFindCount();
+        scrollToMatch();
+    }
+
+    function replaceCurrent() {
+        var match = findState.matches[findState.index];
+        if (!match) return;
+        cm.replaceRange(replaceInput.value,
+            cm.posFromIndex(match.from), cm.posFromIndex(match.to));
+        runFind(findInput.value, true);
+    }
+
+    function replaceAll() {
+        if (!findState.matches.length) return;
+        var replacement = replaceInput.value;
+        cm.operation(function () {
+            for (var i = findState.matches.length - 1; i >= 0; i--) {
+                var m = findState.matches[i];
+                cm.replaceRange(replacement,
+                    cm.posFromIndex(m.from), cm.posFromIndex(m.to), "+replaceAll");
+            }
+        });
+        runFind(findInput.value, false);
+    }
+
+    findInput.addEventListener("input", function () { runFind(findInput.value, false); });
+    findInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            findNext(e.shiftKey ? -1 : 1);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeFindBar();
+        }
+    });
+    replaceInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            replaceCurrent();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeFindBar();
+        }
+    });
+    document.getElementById("find-next").addEventListener("click", function () { findNext(1); });
+    document.getElementById("find-prev").addEventListener("click", function () { findNext(-1); });
+    replaceOneBtn.addEventListener("click", replaceCurrent);
+    replaceAllBtn.addEventListener("click", replaceAll);
+    document.getElementById("find-close").addEventListener("click", closeFindBar);
+
+    /* ===================== 图片灯箱 / 代码复制 ===================== */
+    var lightbox = document.getElementById("lightbox");
+    var lightboxImg = document.getElementById("lightbox-img");
+
+    function copyText(text, button) {
+        function done() {
+            var old = button.textContent;
+            button.textContent = "已复制";
+            setTimeout(function () { button.textContent = old; }, 1200);
+        }
+        function fallback() {
+            var area = document.createElement("textarea");
+            area.value = text;
+            area.style.position = "fixed";
+            area.style.opacity = "0";
+            document.body.appendChild(area);
+            area.select();
+            try { document.execCommand("copy"); done(); } catch (e) { /* 忽略 */ }
+            document.body.removeChild(area);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, fallback);
+        } else {
+            fallback();
+        }
+    }
+
+    document.getElementById("md-body").addEventListener("click", function (e) {
+        var target = e.target;
+        if (!target) return;
+
+        var button = target.closest ? target.closest(".copy-code") : null;
+        if (button) {
+            var idx = parseInt(button.getAttribute("data-code"), 10);
+            copyText(codeSnippets[idx] || "", button);
+            return;
+        }
+        if (target.tagName === "IMG" && !(target.closest && target.closest("a"))) {
+            lightboxImg.src = target.src;
+            lightbox.hidden = false;
+        }
+    });
+
+    lightbox.addEventListener("click", function () {
+        lightbox.hidden = true;
+        lightboxImg.src = "";
+    });
+
+    /* ===================== 粘贴 / 拖拽图片 ===================== */
+    function sendImageFile(file) {
+        if (!file || !/^image\//.test(file.type || "")) return;
+        if (currentTabId == null) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+            postMessage({ type: "saveImage", tabId: currentTabId, dataUrl: reader.result });
+        };
+        reader.readAsDataURL(file);
+    }
+
+    cm.getWrapperElement().addEventListener("paste", function (e) {
+        var items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].type && items[i].type.indexOf("image/") === 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                sendImageFile(items[i].getAsFile());
+                return;
+            }
+        }
+    }, true);
+
+    function onImageDrop(e) {
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || !files.length) return;
+        if (files[0].type && files[0].type.indexOf("image/") === 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            sendImageFile(files[0]);
+        }
+    }
+
+    function onImageDragOver(e) {
+        if (!e.dataTransfer) return;
+        var types = e.dataTransfer.types;
+        if (types && Array.prototype.indexOf.call(types, "Files") >= 0) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+        }
+    }
+
+    [editorPane, previewPane].forEach(function (pane) {
+        pane.addEventListener("dragover", onImageDragOver);
+        pane.addEventListener("drop", onImageDrop);
+    });
+
+    /* ===================== Ctrl+滚轮 缩放 ===================== */
+    function onZoomWheel(e) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        postMessage({ type: "zoom", delta: e.deltaY < 0 ? 0.1 : -0.1 });
+    }
+    previewPane.addEventListener("wheel", onZoomWheel, { passive: false });
+    cm.getWrapperElement().addEventListener("wheel", onZoomWheel, { passive: false });
 
     /* ===================== 保存 ===================== */
     function doSave() {
@@ -516,6 +1097,7 @@
 
     /* ===================== 视图切换 ===================== */
     var splitRatio = 0.5;   // 分栏时编辑区占比（拖动分隔条后保持）
+    var typewriter = false; // 打字机模式：光标行居中
 
     function applySplitWidth() {
         if (viewMode !== "split") return;
@@ -622,6 +1204,8 @@
         var body = document.body;
         body.classList.remove("theme-light", "theme-green", "theme-dark");
         body.classList.add("theme-" + (mode || "light"));
+        // 让滚动条、表单控件等原生部件也跟随深色
+        document.documentElement.style.colorScheme = mode === "dark" ? "dark" : "light";
         // CodeMirror 主题：基础 mdview + 配色后缀
         var suffix = mode === "dark" ? "dark" : mode === "green" ? "green" : "";
         cm.setOption("theme", suffix ? "mdview " + suffix : "mdview");
@@ -662,6 +1246,40 @@
         save: doSave
     };
 
+    /* ===================== 设置 / 插入 / 跳转 ===================== */
+    function applySettings(data) {
+        if (typeof data.zoom === "number" && isFinite(data.zoom)) {
+            var z = Math.min(2.5, Math.max(0.6, data.zoom));
+            var root = document.documentElement;
+            root.style.setProperty("--preview-font-size", (16 * z).toFixed(2) + "px");
+            root.style.setProperty("--editor-font-size", (14.5 * z).toFixed(2) + "px");
+            try { cm.refresh(); } catch (e) { /* 尚未初始化时忽略 */ }
+        }
+        if (typeof data.splitRatio === "number") {
+            splitRatio = Math.min(0.85, Math.max(0.15, data.splitRatio));
+            applySplitWidth();
+        }
+        if (typeof data.typewriter === "boolean") {
+            typewriter = data.typewriter;
+        }
+    }
+
+    function insertTextAtCursor(text) {
+        if (currentTabId == null || !text) return;
+        cm.replaceSelection(text, "end");
+        cm.focus();
+    }
+
+    function gotoLine(line, ch) {
+        if (currentTabId == null) return;
+        var last = cm.lineCount() - 1;
+        var target = Math.max(0, Math.min(last, line || 0));
+        cm.setCursor({ line: target, ch: ch || 0 });
+        if (viewMode === "preview") setView("split");
+        cm.scrollIntoView({ line: target, ch: ch || 0 }, 120);
+        cm.focus();
+    }
+
     /* ===================== C# -> JS 消息 ===================== */
     window.chrome.webview.addEventListener("message", function (ev) {
         var data = ev.data;
@@ -687,9 +1305,12 @@
             if (currentTabId && data.reset) delete buffers[currentTabId];
 
             if (currentTabId && !buffers[currentTabId]) {
+                var initialText = data.text || "";
                 buffers[currentTabId] = {
-                    text: data.text || "",
+                    text: initialText,
                     dirty: !!data.dirty,
+                    // 无脏标记时，刚加载的内容就是「已保存基线」
+                    savedText: data.dirty ? null : initialText,
                     editScroll: null,
                     cursor: null,
                     previewScroll: data.initialScroll || 0
@@ -698,15 +1319,35 @@
                 // 跨窗口带来的编辑内容
                 buffers[currentTabId].text = data.editText;
                 buffers[currentTabId].dirty = !!data.dirty;
+                buffers[currentTabId].savedText = data.dirty ? null : data.editText;
             }
 
             var b = currentTabId ? buffers[currentTabId] : null;
             if (b) {
                 setEditorSilent(b.text);
                 renderMarkdown(b.text, currentTabId, data.initialScroll || b.previewScroll || 0);
-                if (b.editScroll) cm.scrollTo(b.editScroll.left, b.editScroll.top);
-                if (b.cursor) cm.setCursor(b.cursor);
+                if (typeof data.cursorLine === "number" && data.cursorLine >= 0) {
+                    var line = Math.min(data.cursorLine, Math.max(0, cm.lineCount() - 1));
+                    var ch = typeof data.cursorCh === "number" ? data.cursorCh : 0;
+                    cm.setCursor({ line: line, ch: Math.max(0, ch) });
+                } else if (b.cursor) {
+                    cm.setCursor(b.cursor);
+                }
+                if (typeof data.editorScroll === "number" && data.editorScroll > 0) {
+                    cm.scrollTo(null, data.editorScroll);
+                } else if (b.editScroll) {
+                    cm.scrollTo(b.editScroll.left, b.editScroll.top);
+                }
             }
+        } else if (data.type === "settings") {
+            applySettings(data);
+        } else if (data.type === "find") {
+            if (data.mode === "next") findNext(1);
+            else openFindBar(data.mode === "replace" ? "replace" : "find");
+        } else if (data.type === "insert") {
+            insertTextAtCursor(data.text || "");
+        } else if (data.type === "gotoLine") {
+            gotoLine(data.line || 0, data.ch || 0);
         } else if (data.type === "scrollTo") {
             scrollToHeading(data.id);
         } else if (data.type === "theme") {
@@ -714,9 +1355,12 @@
         } else if (data.type === "view") {
             setView(data.mode);
         } else if (data.type === "saved") {
-            // 保存成功：清脏标记
+            // 保存成功：清脏标记，并把当前内容记为新的“已保存基线”
             var sb = buffers[data.tabId];
-            if (sb) sb.dirty = false;
+            if (sb) {
+                sb.savedText = sb.text;
+                sb.dirty = false;
+            }
         } else if (data.type === "dropTab") {
             // 标签已关闭/已移交给其他窗口：释放缓冲区，避免内存泄漏
             if (data.tabId) delete buffers[data.tabId];
@@ -760,6 +1404,28 @@
     // 焦点不在 CodeMirror 中时（如点击预览/目录）也能用 Ctrl+S 保存
     // Ctrl+W 关闭当前标签；Ctrl+Tab / Ctrl+Shift+Tab 切换标签
     window.addEventListener("keydown", function (e) {
+        if (e.key === "F11") {
+            e.preventDefault();
+            postMessage({ type: "fullscreen" });
+            return;
+        }
+        if (e.key === "F3") {
+            e.preventDefault();
+            findNext(e.shiftKey ? -1 : 1);
+            return;
+        }
+        if (e.key === "Escape") {
+            if (!lightbox.hidden) {
+                lightbox.hidden = true;
+                lightboxImg.src = "";
+                return;
+            }
+            if (findState.open) {
+                closeFindBar();
+                return;
+            }
+        }
+
         if (!(e.ctrlKey || e.metaKey)) return;
         var t = e.target;
         var inEditor = !!(t && t.closest && t.closest(".CodeMirror"));
@@ -778,6 +1444,36 @@
         if (e.key === "w" || e.key === "W") {
             e.preventDefault();
             postMessage({ type: "closeTab", tabId: currentTabId });
+            return;
+        }
+        if (e.key === "f" || e.key === "F") {
+            e.preventDefault();
+            openFindBar("find");
+            return;
+        }
+        if (e.key === "h" || e.key === "H") {
+            e.preventDefault();
+            openFindBar("replace");
+            return;
+        }
+        if (e.key === "=" || e.key === "+") {
+            e.preventDefault();
+            postMessage({ type: "zoom", delta: 0.1 });
+            return;
+        }
+        if (e.key === "-") {
+            e.preventDefault();
+            postMessage({ type: "zoom", delta: -0.1 });
+            return;
+        }
+        if (e.key === "0") {
+            e.preventDefault();
+            postMessage({ type: "zoom", absolute: 1.0 });
+            return;
+        }
+        if (e.key === "p" || e.key === "P") {
+            e.preventDefault();
+            postMessage({ type: "print" });
             return;
         }
         if (e.key === "Tab") {

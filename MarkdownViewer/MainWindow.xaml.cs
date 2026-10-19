@@ -23,9 +23,23 @@ namespace MarkdownViewer
         private bool _suppressTocSelection;   // 滚动联动高亮时，不触发跳转
         private Guid? _tocOwnerId;            // 当前目录面板对应的标签
         private GridLength _lastTocWidth = new(280);
-        private string _themeMode = "light";  // light / green / dark
+        private string _themeMode = "light";  // light / green / dark（跟随系统后解析出的实际主题）
+        private string _themeSetting = "light"; // light / green / dark / system（用户选择）
         private string _viewMode = "preview"; // preview / split / edit
         private bool _reallyClosing;          // 关闭检查通过后真正关闭窗口
+        private bool _closeConfirming;        // 正在逐个确认未保存标签，避免重复弹窗
+
+        // ---- 用户设置 / 自动保存 / 外部修改监听 ----
+        private AppSettings _settings = new();
+        private DispatcherTimer? _autoSaveTimer;
+        private FileSystemWatcher? _watcher;
+        private string? _watchedPath;
+        private DateTime _lastKnownWriteUtc;
+        private int _watcherSuppress;
+        private DispatcherTimer? _watcherDebounce;
+        private bool _isFullScreen;
+        private WindowStyle _prevWindowStyle;
+        private WindowState _prevWindowState;
 
         private readonly ObservableCollection<TabDoc> _tabs = new();
         private TabDoc? CurrentTab => Tabs.SelectedItem as TabDoc;
@@ -131,51 +145,84 @@ namespace MarkdownViewer
             if (!_reallyClosing)
             {
                 e.Cancel = true;
+                // 用户反复点关闭按钮时，不重复发起确认流程（否则会叠加多个对话框）
+                if (_closeConfirming) return;
+                _closeConfirming = true;
                 _ = ConfirmCloseAndCloseAsync();
                 return;
             }
             AllWindows.Remove(this);
             _dragTimer?.Stop();
+            _autoSaveTimer?.Stop();
+            _watcher?.Dispose();
+            _watcher = null;
         }
 
         /// <summary>关闭整个窗口前，对所有未保存标签逐一确认。</summary>
         private async Task ConfirmCloseAndCloseAsync()
         {
-            foreach (var tab in _tabs.ToList())
+            try
             {
-                await SyncTabFromEditorAsync(tab);
-                if (tab.IsDirty)
+                foreach (var tab in _tabs.ToList())
                 {
-                    var r = MessageBox.Show(
-                        $"文档「{tab.BaseTitle}」有未保存的修改，是否保存？",
-                        "保存修改", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-                    if (r == MessageBoxResult.Cancel) return;
-                    if (r == MessageBoxResult.Yes)
+                    await SyncTabFromEditorAsync(tab);
+                    if (tab.IsDirty)
                     {
-                        var ok = await SaveTabAsync(tab);
-                        if (!ok) return; // 保存失败（如另存被取消）则不关闭
+                        var r = MessageBox.Show(
+                            $"文档「{tab.BaseTitle}」有未保存的修改，是否保存？",
+                            "保存修改", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+                        if (r == MessageBoxResult.Cancel) return;
+                        if (r == MessageBoxResult.Yes)
+                        {
+                            var ok = await SaveTabAsync(tab);
+                            if (!ok) return; // 保存失败（如另存被取消）则不关闭
+                        }
+                        else
+                        {
+                            // 用户选择不保存：清除脏标记，避免下次会话恢复出已丢弃的修改
+                            tab.IsDirty = false;
+                            tab.EditText = null;
+                        }
                     }
                 }
+                if (!_isFloating)
+                {
+                    await SaveSessionAsync();
+                    SaveSettings();
+                }
+                _reallyClosing = true;
+                Close();
             }
-            _reallyClosing = true;
-            Close();
+            finally
+            {
+                // 用户取消关闭（或保存失败）后，允许下次重新发起确认
+                if (!_reallyClosing) _closeConfirming = false;
+            }
         }
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            // 主题（独立窗口继承源窗口主题）
-            ThemeBox.SelectedIndex = _themeMode switch
+            _settings = AppSettings.Load();
+            if (!_isFloating)
             {
-                "green" => 1,
-                "dark" => 2,
-                _ => 0
-            };
+                // 独立窗口由构造函数参数继承源窗口的主题/视图
+                _viewMode = _settings.View;
+            }
+
+            _themeSetting = !_isFloating ? _settings.Theme : _themeMode;
+            _themeMode = ResolveTheme(_themeSetting);
+            SelectThemeRadio(_themeSetting);
             ApplyWpfTheme();
             SyncViewButtons();
+            ApplyTocSettings();
+            TypewriterToggle.IsChecked = _settings.Typewriter;
+            ApplyWindowPlacement();
+            RebuildRecentMenu();
 
             try
             {
-                var env = await CoreWebView2Environment.CreateAsync(null);
+                // 设置/日志/缓存目录：绿色版在 exe 旁的 userdata，安装版在 %APPDATA%
+                var env = await CoreWebView2Environment.CreateAsync(null, AppPaths.WebViewDataDir);
                 await WebView.EnsureCoreWebView2Async(env);
             }
             catch (Exception ex)
@@ -216,7 +263,27 @@ namespace MarkdownViewer
                 _webReady = true;
                 ApplyWebTheme();
                 ApplyWebView();
+                ApplySettingsToWeb();
                 if (CurrentTab != null) PushMarkdown(CurrentTab);
+            };
+
+            // 预览内核崩溃/被系统杀进程时自动尝试恢复，避免白屏
+            WebView.CoreWebView2.ProcessFailed += (s, ev) =>
+            {
+                Logger.Error($"WebView2 进程异常：{ev.ProcessFailedKind}");
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        MessageBox.Show("预览内核异常退出，正在尝试恢复。", "MarkdownViewer",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        WebView.Reload();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error("恢复 WebView2 失败", ex);
+                    }
+                }));
             };
 
             WebView.CoreWebView2.Navigate(AppHost + "index.html");
@@ -229,13 +296,468 @@ namespace MarkdownViewer
             }
             else if (!_isFloating)
             {
-                // 命令行参数：MarkdownViewer.exe  a.md b.md
-                var args = Environment.GetCommandLineArgs();
-                for (int i = 1; i < args.Length; i++)
+                // 有命令行文件时优先打开文件，否则恢复上次会话
+                if (!await OpenCommandLineFiles()) RestoreSession();
+            }
+
+            StartAutoSave();
+        }
+
+        /// <summary>命令行参数：MarkdownViewer.exe  a.md b.md</summary>
+        private async Task<bool> OpenCommandLineFiles()
+        {
+            var opened = false;
+            var args = Environment.GetCommandLineArgs();
+            for (var i = 1; i < args.Length; i++)
+            {
+                if (File.Exists(args[i]) && IsTextDocument(args[i]))
                 {
-                    if (File.Exists(args[i])) OpenTab(args[i]);
+                    await OpenTabAsync(args[i]);
+                    opened = true;
                 }
             }
+            return opened;
+        }
+
+        // ======================= 设置 / 会话 / 自动保存 / 文件监听 =======================
+
+        /// <summary>解析主题：跟随系统时按注册表读取 Windows 应用深浅色。</summary>
+        private static string ResolveTheme(string theme)
+        {
+            if (theme != "system") return theme;
+            return IsSystemDark() ? "dark" : "light";
+        }
+
+        private static bool IsSystemDark()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                return key?.GetValue("AppsUseLightTheme") is int i && i == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>恢复窗口位置尺寸（屏幕变化导致越界时忽略）。</summary>
+        private void ApplyWindowPlacement()
+        {
+            var p = _settings.Window;
+            if (p == null || _isFloating) return;
+            if (p.Width < 400 || p.Height < 300) return;
+
+            var vLeft = SystemParameters.VirtualScreenLeft;
+            var vTop = SystemParameters.VirtualScreenTop;
+            var vRight = vLeft + SystemParameters.VirtualScreenWidth;
+            var vBottom = vTop + SystemParameters.VirtualScreenHeight;
+            if (p.Left >= vLeft && p.Top >= vTop &&
+                p.Left + 120 < vRight && p.Top + 80 < vBottom)
+            {
+                Left = p.Left;
+                Top = p.Top;
+            }
+            Width = p.Width;
+            Height = p.Height;
+            if (p.Maximized) WindowState = WindowState.Maximized;
+        }
+
+        private void ApplyTocSettings()
+        {
+            TocToggle.IsChecked = _settings.TocVisible;
+            if (_settings.TocVisible)
+            {
+                TocColumn.Width = new GridLength(_settings.TocWidth);
+                _lastTocWidth = new GridLength(_settings.TocWidth);
+            }
+        }
+
+        /// <summary>把用户设置推送给前端（缩放、分栏比例、打字机模式）。</summary>
+        private void ApplySettingsToWeb()
+        {
+            if (!_webReady || WebView.CoreWebView2 == null) return;
+            WebView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "settings",
+                zoom = _settings.Zoom,
+                splitRatio = _settings.SplitRatio,
+                typewriter = _settings.Typewriter,
+                autoSave = _settings.AutoSave
+            }));
+        }
+
+        private void SaveSettings()
+        {
+            _settings.Theme = _themeSetting;
+            _settings.View = _viewMode;
+            _settings.TocVisible = TocToggle.IsChecked == true;
+            if (TocColumn.ActualWidth > 0) _settings.TocWidth = TocColumn.ActualWidth;
+            if (!_isFloating)
+            {
+                var b = RestoreBounds;
+                if (!b.IsEmpty && b.Width >= 400 && b.Height >= 300)
+                {
+                    _settings.Window = new WindowPlacement
+                    {
+                        Left = b.Left,
+                        Top = b.Top,
+                        Width = b.Width,
+                        Height = b.Height,
+                        Maximized = WindowState == WindowState.Maximized
+                    };
+                }
+            }
+            _settings.Save();
+        }
+
+        /// <summary>执行 JS 并解析返回的 JSON（兼容字符串包裹一层的情况）。</summary>
+        private async Task<JsonElement?> ExecuteJsonAsync(string script)
+        {
+            if (!_webReady || WebView.CoreWebView2 == null) return null;
+            try
+            {
+                var raw = await WebView.CoreWebView2.ExecuteScriptAsync(script);
+                if (string.IsNullOrWhiteSpace(raw) || raw == "null") return null;
+                using var doc = JsonDocument.Parse(raw);
+                var root = doc.RootElement.Clone();
+                if (root.ValueKind == JsonValueKind.String)
+                {
+                    var inner = root.GetString();
+                    if (string.IsNullOrWhiteSpace(inner)) return null;
+                    using var doc2 = JsonDocument.Parse(inner);
+                    return doc2.RootElement.Clone();
+                }
+                return root.ValueKind == JsonValueKind.Object ? root : null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("执行脚本失败：" + ex.Message);
+                return null;
+            }
+        }
+
+        private sealed record TabSnapshot(
+            string Text, bool Dirty, double PreviewScroll, double EditorScroll, int CursorLine, int CursorCh);
+
+        private async Task<TabSnapshot> ReadTabSnapshotAsync(TabDoc tab)
+        {
+            var text = tab.EditText ?? tab.MarkdownText;
+            var preview = tab.ScrollY;
+            var editor = tab.RestoreEditorScroll ?? 0;
+            var line = tab.RestoreLine;
+            var ch = tab.RestoreCh;
+            var dirty = tab.IsDirty;
+
+            var root = await ExecuteJsonAsync(
+                $"window.getTabSnapshot ? window.getTabSnapshot('{tab.Id}') : null");
+            if (root is { } r)
+            {
+                if (r.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                    text = t.GetString() ?? text;
+                if (r.TryGetProperty("dirty", out var d) &&
+                    (d.ValueKind == JsonValueKind.True || d.ValueKind == JsonValueKind.False))
+                    dirty = d.GetBoolean();
+                if (r.TryGetProperty("previewScroll", out var ps) && ps.ValueKind == JsonValueKind.Number)
+                    preview = ps.GetDouble();
+                if (r.TryGetProperty("editorScroll", out var es) && es.ValueKind == JsonValueKind.Number)
+                    editor = es.GetDouble();
+                if (r.TryGetProperty("cursorLine", out var cl) && cl.ValueKind == JsonValueKind.Number)
+                    line = cl.GetInt32();
+                if (r.TryGetProperty("cursorCh", out var cc) && cc.ValueKind == JsonValueKind.Number)
+                    ch = cc.GetInt32();
+            }
+            return new TabSnapshot(text, dirty, preview, editor, line, ch);
+        }
+
+        /// <summary>关闭前保存会话（标签、滚动、光标、分栏比例）。</summary>
+        private async Task SaveSessionAsync()
+        {
+            var session = new List<SessionTabState>();
+            foreach (var tab in _tabs.ToList())
+            {
+                try
+                {
+                    var snap = await ReadTabSnapshotAsync(tab);
+                    var keepText = tab.IsDirty || string.IsNullOrEmpty(tab.FilePath);
+                    session.Add(new SessionTabState
+                    {
+                        Path = string.IsNullOrEmpty(tab.FilePath) ? null : tab.FilePath,
+                        DisplayName = tab.DisplayName,
+                        Text = keepText ? snap.Text : "",
+                        Dirty = tab.IsDirty,
+                        Encoding = tab.Encoding.ToString(),
+                        PreviewScroll = snap.PreviewScroll,
+                        EditorScroll = snap.EditorScroll,
+                        CursorLine = snap.CursorLine,
+                        CursorCh = snap.CursorCh
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("保存会话片段失败：" + ex.Message);
+                }
+            }
+            _settings.Session = session;
+            _settings.ActiveTabIndex = Math.Max(0, Tabs.SelectedIndex);
+
+            var ui = await ExecuteJsonAsync("window.getUiState ? window.getUiState() : null");
+            if (ui is { } state && state.TryGetProperty("splitRatio", out var sr) &&
+                sr.ValueKind == JsonValueKind.Number)
+            {
+                _settings.SplitRatio = Math.Clamp(sr.GetDouble(), 0.15, 0.85);
+            }
+        }
+
+        private bool RestoreSession()
+        {
+            var list = _settings.Session;
+            if (list == null || list.Count == 0) return false;
+
+            var restored = 0;
+            foreach (var s in list)
+            {
+                try
+                {
+                    TabDoc tab;
+                    if (!string.IsNullOrEmpty(s.Path))
+                    {
+                        if (!File.Exists(s.Path)) continue;
+                        var read = FileReaderHelper.ReadMarkdownFileEx(s.Path);
+                        tab = CreateTabDoc(s.Path, read.Text, read.Encoding);
+                        if (s.Dirty)
+                        {
+                            tab.EditText = s.Text ?? read.Text;
+                            tab.IsDirty = true;
+                            if (Enum.TryParse<MdEncoding>(s.Encoding, out var savedEnc))
+                                tab.Encoding = savedEnc;
+                        }
+                    }
+                    else
+                    {
+                        tab = CreateTabDoc("", s.Text ?? "", MdEncoding.Utf8NoBom);
+                        tab.DisplayName = string.IsNullOrWhiteSpace(s.DisplayName)
+                            ? $"未命名-{Interlocked.Increment(ref _untitledCounter)}.md"
+                            : s.DisplayName;
+                        if (s.Dirty)
+                        {
+                            tab.EditText = s.Text ?? "";
+                            tab.IsDirty = true;
+                        }
+                    }
+                    tab.ScrollY = s.PreviewScroll;
+                    tab.RestoreEditorScroll = s.EditorScroll;
+                    tab.RestoreLine = s.CursorLine;
+                    tab.RestoreCh = s.CursorCh;
+                    _tabs.Add(tab);
+                    restored++;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"恢复「{s.Path}」失败：{ex.Message}");
+                }
+            }
+
+            if (restored == 0) return false;
+            Tabs.SelectedIndex = Math.Clamp(_settings.ActiveTabIndex, 0, _tabs.Count - 1);
+            return true;
+        }
+
+        private void StartAutoSave()
+        {
+            if (_autoSaveTimer == null)
+            {
+                _autoSaveTimer = new DispatcherTimer();
+                _autoSaveTimer.Tick += async (_, _) => await AutoSaveTickAsync();
+            }
+            _autoSaveTimer.Interval = TimeSpan.FromSeconds(Math.Max(5, _settings.AutoSaveSeconds));
+            if (_settings.AutoSave) _autoSaveTimer.Start();
+            else _autoSaveTimer.Stop();
+        }
+
+        /// <summary>自动保存所有有路径且已修改的标签（静默，无对话框）。</summary>
+        private async Task AutoSaveTickAsync()
+        {
+            foreach (var tab in _tabs.ToList())
+            {
+                if (string.IsNullOrEmpty(tab.FilePath) || !_tabs.Contains(tab)) continue;
+                await SyncTabFromEditorAsync(tab);
+                if (!tab.IsDirty) continue;
+                try
+                {
+                    var text = tab.EditText ?? tab.MarkdownText;
+                    _watcherSuppress++;
+                    FileReaderHelper.WriteMarkdownFile(tab.FilePath, text, tab.Encoding);
+                    _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
+                    tab.MarkdownText = text;
+                    tab.EditText = null;
+                    tab.IsDirty = false;
+                    WebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(
+                        new { type = "saved", tabId = tab.Id.ToString() }));
+                    if (ReferenceEquals(tab, CurrentTab))
+                    {
+                        RefreshWindowTitle();
+                        StatusText.Text = "已自动保存：" + tab.FilePath;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("自动保存失败：" + tab.FilePath, ex);
+                }
+                finally
+                {
+                    _watcherSuppress--;
+                }
+            }
+        }
+
+        private static DateTime SafeLastWrite(string? path)
+        {
+            try
+            {
+                return string.IsNullOrEmpty(path) ? DateTime.MinValue : File.GetLastWriteTimeUtc(path!);
+            }
+            catch
+            {
+                return DateTime.MinValue;
+            }
+        }
+
+        /// <summary>只监听当前标签对应的文件，检测外部修改。</summary>
+        private void UpdateWatcher(TabDoc? tab)
+        {
+            var path = tab?.FilePath;
+            _lastKnownWriteUtc = SafeLastWrite(path);
+            if (string.Equals(path, _watchedPath, StringComparison.OrdinalIgnoreCase)) return;
+
+            _watchedPath = path;
+            _watcher?.Dispose();
+            _watcher = null;
+
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                var dir = Path.GetDirectoryName(path);
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+                _watcher = new FileSystemWatcher(dir, Path.GetFileName(path))
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size |
+                                   NotifyFilters.FileName | NotifyFilters.CreationTime
+                };
+                _watcher.Changed += OnWatchedFileChanged;
+                _watcher.Created += OnWatchedFileChanged;
+                _watcher.Renamed += OnWatchedFileChanged;
+                _watcher.Deleted += OnWatchedFileChanged;
+                _watcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("文件监听启动失败：" + ex.Message);
+            }
+        }
+
+        private void OnWatchedFileChanged(object sender, FileSystemEventArgs e)
+        {
+            // 文件系统事件可能连续触发，统一延迟 600ms 再判断
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_watcherDebounce == null)
+                {
+                    _watcherDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+                    _watcherDebounce.Tick += (_, _) =>
+                    {
+                        _watcherDebounce!.Stop();
+                        HandleExternalChange();
+                    };
+                }
+                _watcherDebounce.Stop();
+                _watcherDebounce.Start();
+            }));
+        }
+
+        private void HandleExternalChange()
+        {
+            if (_watcherSuppress > 0) return;
+            var tab = CurrentTab;
+            if (tab == null || string.IsNullOrEmpty(tab.FilePath)) return;
+            if (!string.Equals(tab.FilePath, _watchedPath, StringComparison.OrdinalIgnoreCase)) return;
+
+            try
+            {
+                if (!File.Exists(tab.FilePath))
+                {
+                    StatusText.Text = "文件已被其它程序删除：" + tab.FilePath;
+                    return;
+                }
+                var write = SafeLastWrite(tab.FilePath);
+                if (write <= _lastKnownWriteUtc) return;
+                _lastKnownWriteUtc = write;
+                if (tab.IsDirty) return; // 有本地未保存修改时不自动覆盖，交由用户决定
+
+                var r = MessageBox.Show(
+                    "文件已被其它程序修改，是否重新加载？\n\n" + tab.FilePath,
+                    "文件已变更", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (r == MessageBoxResult.Yes) ReloadCurrentTabSilently();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("处理外部修改失败：" + ex.Message);
+            }
+        }
+
+        private void ReloadCurrentTabSilently()
+        {
+            var tab = CurrentTab;
+            if (tab == null || string.IsNullOrEmpty(tab.FilePath)) return;
+            try
+            {
+                var read = FileReaderHelper.ReadMarkdownFileEx(tab.FilePath);
+                tab.MarkdownText = read.Text;
+                tab.Encoding = read.Encoding;
+                tab.EditText = null;
+                tab.IsDirty = false;
+                _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
+                if (_webReady) PushMarkdown(tab, reset: true);
+                RefreshWindowTitle();
+                StatusText.Text = "已重新加载：" + tab.FilePath;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("重新加载失败", ex);
+                MessageBox.Show("重新加载失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void RebuildRecentMenu()
+        {
+            if (RecentMenu == null) return;
+            RecentMenu.Items.Clear();
+            var files = _settings.RecentFiles.Where(File.Exists).ToList();
+            foreach (var path in files)
+            {
+                var item = new System.Windows.Controls.MenuItem { Header = path, ToolTip = path };
+                item.Click += (_, _) => OpenTab(path);
+                RecentMenu.Items.Add(item);
+            }
+            if (files.Count == 0)
+            {
+                RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
+                {
+                    Header = "（暂无最近文件）",
+                    IsEnabled = false
+                });
+                return;
+            }
+            RecentMenu.Items.Add(new Separator());
+            var clear = new System.Windows.Controls.MenuItem { Header = "清除最近列表" };
+            clear.Click += (_, _) =>
+            {
+                _settings.RecentFiles.Clear();
+                RebuildRecentMenu();
+            };
+            RecentMenu.Items.Add(clear);
         }
 
         /// <summary>按色板创建带颜色的标签文档。</summary>
@@ -265,8 +787,11 @@ namespace MarkdownViewer
             return b;
         }
 
+        /// <summary>打开一个 Markdown 文件为标签页（不等待读取完成）。</summary>
+        public void OpenTab(string filePath) => _ = OpenTabAsync(filePath);
+
         /// <summary>打开一个 Markdown 文件为标签页；已打开则切换到现有标签。</summary>
-        public void OpenTab(string filePath)
+        public async Task<TabDoc?> OpenTabAsync(string filePath)
         {
             try
             {
@@ -276,18 +801,28 @@ namespace MarkdownViewer
                 if (existing != null)
                 {
                     Tabs.SelectedItem = existing;
-                    return;
+                    return existing;
                 }
 
-                var read = FileReaderHelper.ReadMarkdownFileEx(full);
+                // 后台读取，大文件不会卡住 UI
+                var read = await Task.Run(() => FileReaderHelper.ReadMarkdownFileEx(full));
                 var tab = CreateTabDoc(full, read.Text, read.Encoding);
                 _tabs.Add(tab);
                 Tabs.SelectedItem = tab;
+                _settings.AddRecent(full);
+                RebuildRecentMenu();
+                if (read.Guessed)
+                {
+                    StatusText.Text += " · 编码为推测结果，若显示异常请用「编码」菜单切换";
+                }
+                return tab;
             }
             catch (Exception ex)
             {
+                Logger.Error("打开文件失败：" + filePath, ex);
                 MessageBox.Show($"打开文件失败：{ex.Message}", "错误",
                     MessageBoxButton.OK, MessageBoxImage.Error);
+                return null;
             }
         }
 
@@ -325,12 +860,15 @@ namespace MarkdownViewer
             }
 
             RefreshWindowTitle();
+            var encName = FileReaderHelper.Name(tab.Encoding);
             StatusText.Text = string.IsNullOrEmpty(tab.FilePath)
-                ? tab.BaseTitle + "（尚未保存）"
-                : tab.FilePath;
+                ? $"{tab.BaseTitle}（尚未保存） · {encName}"
+                : $"{tab.FilePath} · {encName}";
 
             // 立即显示该标签缓存的目录（首次打开时为空，待前端渲染后回传）
             if (_tocOwnerId != tab.Id) ShowCachedToc(tab);
+
+            UpdateWatcher(tab);
 
             // 把该标签 md 所在目录映射为虚拟主机，使相对路径图片可正常显示
             var dir = string.IsNullOrEmpty(tab.FilePath) ? null : Path.GetDirectoryName(tab.FilePath);
@@ -497,9 +1035,12 @@ namespace MarkdownViewer
                 tab.MarkdownText = text;
                 tab.EditText = null;
                 tab.IsDirty = false;
+                _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
+                _settings.AddRecent(tab.FilePath);
+                RebuildRecentMenu();
                 WebView.CoreWebView2?.PostWebMessageAsJson(
                     JsonSerializer.Serialize(new { type = "saved", tabId = tab.Id.ToString() }));
-                StatusText.Text = "已保存：" + tab.FilePath;
+                StatusText.Text = $"已保存：{tab.FilePath} · {FileReaderHelper.Name(tab.Encoding)}";
                 if (ReferenceEquals(tab, CurrentTab)) RefreshWindowTitle();
                 return true;
             }
@@ -532,6 +1073,9 @@ namespace MarkdownViewer
                 tab.EditText = null;
                 tab.IsDirty = false;
                 tab.RefreshTitle();
+                _lastKnownWriteUtc = SafeLastWrite(newPath);
+                _settings.AddRecent(newPath);
+                RebuildRecentMenu();
 
                 // 新文件所在目录映射为图片虚拟主机，保证相对路径图片继续可用
                 var newDir = Path.GetDirectoryName(newPath);
@@ -575,18 +1119,69 @@ namespace MarkdownViewer
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {
             base.OnPreviewKeyDown(e);
+
+            if (e.Key == Key.F11)
+            {
+                ToggleFullScreen();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.F3)
+            {
+                FindNext_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
             var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
             if (!ctrl) return;
+            var shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
 
-            if (e.Key == Key.Tab)
+            switch (e.Key)
             {
-                SwitchTab((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift ? -1 : 1);
-                e.Handled = true;
-            }
-            else if (e.Key == Key.W)
-            {
-                if (CurrentTab != null) _ = CloseTabAsync(CurrentTab);
-                e.Handled = true;
+                case Key.Tab:
+                    SwitchTab(shift ? -1 : 1);
+                    e.Handled = true;
+                    break;
+                case Key.W:
+                    if (CurrentTab != null) _ = CloseTabAsync(CurrentTab);
+                    e.Handled = true;
+                    break;
+                case Key.S when shift:
+                    if (CurrentTab != null) _ = SaveTabAsAsync(CurrentTab);
+                    e.Handled = true;
+                    break;
+                case Key.F when shift:
+                    SearchInFolder_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case Key.F:
+                    PostToWeb(new { type = "find", mode = "find" });
+                    e.Handled = true;
+                    break;
+                case Key.H:
+                    PostToWeb(new { type = "find", mode = "replace" });
+                    e.Handled = true;
+                    break;
+                case Key.P:
+                    Print_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case Key.OemPlus:
+                case Key.Add:
+                    SetZoom(_settings.Zoom + 0.1);
+                    e.Handled = true;
+                    break;
+                case Key.OemMinus:
+                case Key.Subtract:
+                    SetZoom(_settings.Zoom - 0.1);
+                    e.Handled = true;
+                    break;
+                case Key.D0:
+                case Key.NumPad0:
+                    SetZoom(1.0);
+                    e.Handled = true;
+                    break;
             }
         }
 
@@ -770,7 +1365,10 @@ namespace MarkdownViewer
                 title = tab.Title,
                 dirty = tab.IsDirty,
                 reset = reset,
-                initialScroll = tab.ScrollY
+                initialScroll = tab.ScrollY,
+                cursorLine = tab.RestoreLine,
+                cursorCh = tab.RestoreCh,
+                editorScroll = tab.RestoreEditorScroll
             });
             WebView.CoreWebView2.PostWebMessageAsJson(payload);
         }
@@ -848,6 +1446,56 @@ namespace MarkdownViewer
                     var ctab = _tabs.FirstOrDefault(x => x.Id.ToString() == ctid) ?? CurrentTab;
                     if (ctab != null) _ = CloseTabAsync(ctab);
                     break;
+                case "zoom":
+                    if (root.TryGetProperty("absolute", out var za) && za.ValueKind == JsonValueKind.Number)
+                        SetZoom(za.GetDouble());
+                    else if (root.TryGetProperty("delta", out var zd) && zd.ValueKind == JsonValueKind.Number)
+                        SetZoom(_settings.Zoom + zd.GetDouble());
+                    break;
+                case "fullscreen":
+                    ToggleFullScreen();
+                    break;
+                case "print":
+                    Print_Click(this, new RoutedEventArgs());
+                    break;
+                case "saveImage":
+                    HandleSaveImage(root);
+                    break;
+            }
+        }
+
+        /// <summary>把从剪贴板/拖拽得到的图片数据保存到文档同级 assets 目录并插入链接。</summary>
+        private void HandleSaveImage(JsonElement root)
+        {
+            var tabId = root.TryGetProperty("tabId", out var t) ? t.GetString() : null;
+            var tab = _tabs.FirstOrDefault(x => x.Id.ToString() == tabId) ?? CurrentTab;
+            if (tab == null) return;
+            if (string.IsNullOrEmpty(tab.FilePath))
+            {
+                StatusText.Text = "请先保存文档，再粘贴图片（图片会存到同级 assets 目录）";
+                return;
+            }
+            if (!root.TryGetProperty("dataUrl", out var du) || du.ValueKind != JsonValueKind.String) return;
+
+            var dataUrl = du.GetString() ?? "";
+            var comma = dataUrl.IndexOf(',');
+            if (comma < 0) return;
+            var header = dataUrl.Substring(0, comma);
+            var base64 = dataUrl.Substring(comma + 1);
+            var ext = header.Contains("image/jpeg", StringComparison.OrdinalIgnoreCase) ? ".jpg"
+                : header.Contains("image/gif", StringComparison.OrdinalIgnoreCase) ? ".gif"
+                : header.Contains("image/webp", StringComparison.OrdinalIgnoreCase) ? ".webp"
+                : ".png";
+            try
+            {
+                var bytes = Convert.FromBase64String(base64);
+                var rel = CopyImageToAssets(tab, "image" + ext, bytes);
+                PostToWeb(new { type = "insert", text = $"![]({rel})" });
+                StatusText.Text = "图片已保存到 " + rel;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("保存粘贴图片失败", ex);
             }
         }
 
@@ -1019,17 +1667,27 @@ namespace MarkdownViewer
         }
 
         /// <summary>主题切换：WPF 面板 + WebView 正文同步。</summary>
-        private void ThemeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void ThemeRadio_Checked(object sender, RoutedEventArgs e)
         {
             if (!IsLoaded) return;
-            _themeMode = ThemeBox.SelectedIndex switch
-            {
-                1 => "green",
-                2 => "dark",
-                _ => "light"
-            };
+            if (sender is not FrameworkElement fe || fe.Tag is not string value) return;
+            _themeSetting = value;
+            _themeMode = ResolveTheme(value);   // 跟随系统时解析为实际主题
             ApplyWpfTheme();
             ApplyWebTheme();
+        }
+
+        /// <summary>按设置名称选中对应的显示模式按钮。</summary>
+        private void SelectThemeRadio(string theme)
+        {
+            var radio = theme switch
+            {
+                "green" => ThemeGreenRadio,
+                "dark" => ThemeDarkRadio,
+                "system" => ThemeSystemRadio,
+                _ => ThemeLightRadio
+            };
+            if (radio != null) radio.IsChecked = true;
         }
 
         private void ApplyWpfTheme()
@@ -1044,33 +1702,432 @@ namespace MarkdownViewer
             Resources["SplitterBrush"] = new SolidColorBrush(p.Splitter);
             Resources["BorderBrush2"] = new SolidColorBrush(p.Border);
             Resources["StatusTextBrush"] = new SolidColorBrush(p.Status);
-
-            // 主题下拉框弹出层使用系统键绘制，需要逐主题覆盖（否则暗黑模式下黑底黑字）
-            ThemeBox.Resources[SystemColors.WindowBrushKey] = new SolidColorBrush(p.TocPanelBg);
-            ThemeBox.Resources[SystemColors.WindowTextBrushKey] = new SolidColorBrush(p.TocText);
-            ThemeBox.Resources[SystemColors.ControlTextBrushKey] = new SolidColorBrush(p.TocText);
-            ThemeBox.Resources[SystemColors.HighlightBrushKey] = new SolidColorBrush(p.TocSelected);
-            ThemeBox.Resources[SystemColors.HighlightTextBrushKey] = new SolidColorBrush(p.TocText);
-
-            // 菜单弹出层同样依赖系统颜色，暗黑模式下需要覆盖
-            if (MainMenu != null)
-            {
-                MainMenu.Resources[SystemColors.MenuBrushKey] = new SolidColorBrush(p.TocPanelBg);
-                MainMenu.Resources[SystemColors.MenuTextBrushKey] = new SolidColorBrush(p.TocText);
-                MainMenu.Resources[SystemColors.WindowBrushKey] = new SolidColorBrush(p.TocPanelBg);
-                MainMenu.Resources[SystemColors.WindowTextBrushKey] = new SolidColorBrush(p.TocText);
-                MainMenu.Resources[SystemColors.ControlTextBrushKey] = new SolidColorBrush(p.TocText);
-                MainMenu.Resources[SystemColors.HighlightBrushKey] = new SolidColorBrush(p.TocSelected);
-                MainMenu.Resources[SystemColors.HighlightTextBrushKey] = new SolidColorBrush(p.TocText);
-            }
         }
 
         private void ApplyWebTheme()
         {
             if (!_webReady) return;
             var webTheme = Themes[_themeMode].WebTheme;
+            // 让 WebView2 自身（含原生右键菜单、滚动条、表单控件）跟随应用主题
+            try
+            {
+                WebView.CoreWebView2.Profile.PreferredColorScheme = webTheme == "dark"
+                    ? CoreWebView2PreferredColorScheme.Dark
+                    : CoreWebView2PreferredColorScheme.Light;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("设置 WebView2 配色方案失败：" + ex.Message);
+            }
             WebView.CoreWebView2.PostWebMessageAsJson(
                 JsonSerializer.Serialize(new { type = "theme", mode = webTheme }));
+        }
+
+        // ======================= 新增菜单命令 =======================
+
+        private void PostToWeb(object payload)
+        {
+            if (!_webReady || WebView.CoreWebView2 == null) return;
+            WebView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
+        }
+
+        private void Find_Click(object sender, RoutedEventArgs e)
+            => PostToWeb(new { type = "find", mode = "find" });
+
+        private void FindNext_Click(object sender, RoutedEventArgs e)
+            => PostToWeb(new { type = "find", mode = "next" });
+
+        private void ViewMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.Tag is not string mode) return;
+            _viewMode = mode;
+            SyncViewButtons();
+            ApplyWebView();
+        }
+
+        private void TypewriterToggle_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.Typewriter = TypewriterToggle.IsChecked == true;
+            ApplySettingsToWeb();
+        }
+
+        // ======================= Office 风格功能区 =======================
+
+        private void RibbonTab_Checked(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.Tag is not string tag) return;
+            ShowRibbonPanel(tag);
+        }
+
+        /// <summary>根据选中的功能区标签，只显示对应的一组工具栏按钮。</summary>
+        private void ShowRibbonPanel(string tag)
+        {
+            if (RibbonFilePanel == null) return;   // InitializeComponent 期间面板尚未创建
+            RibbonFilePanel.Visibility = tag == "file" ? Visibility.Visible : Visibility.Collapsed;
+            RibbonEditPanel.Visibility = tag == "edit" ? Visibility.Visible : Visibility.Collapsed;
+            RibbonViewPanel.Visibility = tag == "view" ? Visibility.Visible : Visibility.Collapsed;
+            RibbonEncodingPanel.Visibility = tag == "encoding" ? Visibility.Visible : Visibility.Collapsed;
+            RibbonHelpPanel.Visibility = tag == "help" ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ZoomIn_Click(object sender, RoutedEventArgs e) => SetZoom(_settings.Zoom + 0.1);
+
+        private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(_settings.Zoom - 0.1);
+
+        private void ZoomReset_Click(object sender, RoutedEventArgs e) => SetZoom(1.0);
+
+        private void SetZoom(double zoom)
+        {
+            _settings.Zoom = Math.Clamp(Math.Round(zoom, 2), 0.6, 2.5);
+            ApplySettingsToWeb();
+            StatusText.Text = $"缩放：{Math.Round(_settings.Zoom * 100)}%";
+        }
+
+        private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+        private void ToggleFullScreen()
+        {
+            if (!_isFullScreen)
+            {
+                _prevWindowStyle = WindowStyle;
+                _prevWindowState = WindowState;
+                WindowStyle = WindowStyle.None;
+                WindowState = WindowState.Normal;
+                WindowState = WindowState.Maximized;
+                _isFullScreen = true;
+            }
+            else
+            {
+                WindowStyle = _prevWindowStyle;
+                WindowState = _prevWindowState;
+                _isFullScreen = false;
+            }
+        }
+
+        private void EncodingMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.Tag is not string name) return;
+            if (Enum.TryParse<MdEncoding>(name, out var enc)) ApplyEncoding(enc);
+        }
+
+        private void ReloadWithEncoding_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab != null) ApplyEncoding(CurrentTab.Encoding);
+        }
+
+        /// <summary>按指定编码重新解码当前文件（用于修正乱码或切换写回编码）。</summary>
+        private void ApplyEncoding(MdEncoding enc)
+        {
+            var tab = CurrentTab;
+            if (tab == null) return;
+
+            if (string.IsNullOrEmpty(tab.FilePath))
+            {
+                tab.Encoding = enc;
+                StatusText.Text = $"后续保存将使用 {FileReaderHelper.Name(enc)}";
+                return;
+            }
+
+            if (tab.IsDirty)
+            {
+                var r = MessageBox.Show(
+                    "切换编码会重新读取磁盘文件，未保存的修改将丢失，是否继续？",
+                    "切换编码", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (r != MessageBoxResult.Yes) return;
+            }
+
+            try
+            {
+                var bytes = File.ReadAllBytes(tab.FilePath);
+                tab.MarkdownText = FileReaderHelper.DecodeWith(enc, bytes);
+                tab.Encoding = enc;
+                tab.EditText = null;
+                tab.IsDirty = false;
+                _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
+                if (_webReady) PushMarkdown(tab, reset: true);
+                RefreshWindowTitle();
+                StatusText.Text = $"已按 {FileReaderHelper.Name(enc)} 重新读取：{tab.FilePath}";
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("按指定编码读取失败", ex);
+                MessageBox.Show("读取失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void ExportHtml_Click(object sender, RoutedEventArgs e)
+        {
+            var tab = CurrentTab;
+            if (tab == null) return;
+            var dlg = new SaveFileDialog
+            {
+                Filter = "HTML 文件 (*.html)|*.html",
+                FileName = Path.GetFileNameWithoutExtension(tab.BaseTitle) + ".html"
+            };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                var title = JsonSerializer.Serialize(tab.BaseTitle);
+                var raw = await WebView.CoreWebView2.ExecuteScriptAsync(
+                    $"window.buildExportHtml({title})");
+                var html = JsonSerializer.Deserialize<string>(raw);
+                if (string.IsNullOrEmpty(html)) throw new InvalidOperationException("导出内容为空");
+                File.WriteAllText(dlg.FileName, html, new System.Text.UTF8Encoding(false));
+                StatusText.Text = "已导出 HTML：" + dlg.FileName;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("导出 HTML 失败", ex);
+                MessageBox.Show("导出 HTML 失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void ExportPdf_Click(object sender, RoutedEventArgs e)
+        {
+            var tab = CurrentTab;
+            if (tab == null) return;
+            var dlg = new SaveFileDialog
+            {
+                Filter = "PDF 文件 (*.pdf)|*.pdf",
+                FileName = Path.GetFileNameWithoutExtension(tab.BaseTitle) + ".pdf"
+            };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                var ok = await WebView.CoreWebView2.PrintToPdfAsync(dlg.FileName);
+                StatusText.Text = ok ? "已导出 PDF：" + dlg.FileName : "导出 PDF 失败";
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("导出 PDF 失败", ex);
+                MessageBox.Show("导出 PDF 失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void Print_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                WebView.CoreWebView2?.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("打开打印对话框失败", ex);
+            }
+        }
+
+        private void InsertImage_Click(object sender, RoutedEventArgs e)
+        {
+            var tab = CurrentTab;
+            if (tab == null) return;
+            if (string.IsNullOrEmpty(tab.FilePath))
+            {
+                MessageBox.Show("请先保存文档，再插入本地图片（图片会复制到同级 assets 目录）。",
+                    "插入图片", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var dlg = new OpenFileDialog
+            {
+                Filter = "图片 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg)|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg|所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                var name = Path.GetFileNameWithoutExtension(dlg.FileName);
+                var rel = CopyImageToAssets(tab, dlg.FileName);
+                PostToWeb(new { type = "insert", text = $"![{name}]({rel})" });
+                StatusText.Text = "图片已复制到 " + rel;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("插入图片失败", ex);
+                MessageBox.Show("插入图片失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>把图片复制到文档同级 assets 目录，返回相对路径（正斜杠）。</summary>
+        private static string CopyImageToAssets(TabDoc tab, string sourcePath, byte[]? bytes = null)
+        {
+            var dir = Path.GetDirectoryName(tab.FilePath);
+            if (string.IsNullOrEmpty(dir)) throw new IOException("文档尚未保存");
+            var assets = Path.Combine(dir, "assets");
+            Directory.CreateDirectory(assets);
+
+            var ext = Path.GetExtension(sourcePath);
+            if (string.IsNullOrEmpty(ext)) ext = ".png";
+            var baseName = Path.GetFileNameWithoutExtension(sourcePath);
+            if (string.IsNullOrWhiteSpace(baseName)) baseName = "image";
+            var name = $"{baseName}-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}";
+            var dest = Path.Combine(assets, name);
+
+            if (bytes != null) File.WriteAllBytes(dest, bytes);
+            else File.Copy(sourcePath, dest, true);
+
+            return "assets/" + name.Replace(' ', '-');
+        }
+
+        private void InsertTable_Click(object sender, RoutedEventArgs e) => PostToWeb(new
+        {
+            type = "insert",
+            text = "| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n"
+        });
+
+        private void InsertCodeBlock_Click(object sender, RoutedEventArgs e) => PostToWeb(new
+        {
+            type = "insert",
+            text = "```text\n\n```\n"
+        });
+
+        private void InsertTaskList_Click(object sender, RoutedEventArgs e) => PostToWeb(new
+        {
+            type = "insert",
+            text = "- [ ] 待办事项\n- [x] 已完成事项\n"
+        });
+
+        private void SearchInFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var tab = CurrentTab;
+            var start = tab != null && !string.IsNullOrEmpty(tab.FilePath)
+                ? Path.GetDirectoryName(tab.FilePath)
+                : null;
+            var win = new SearchWindow(this, start) { Owner = this };
+            win.Show();
+        }
+
+        /// <summary>打开文件并跳转到指定行（文件夹搜索使用）。</summary>
+        public async void OpenTabAtLine(string filePath, int line)
+        {
+            var tab = await OpenTabAsync(filePath);
+            if (tab == null) return;
+            tab.RestoreLine = Math.Max(0, line - 1);
+            tab.RestoreCh = 0;
+            PostToWeb(new { type = "gotoLine", line = tab.RestoreLine, ch = 0 });
+        }
+
+        private void CloseCurrentTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab != null) _ = CloseTabAsync(CurrentTab);
+        }
+
+        private void Shortcuts_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "Ctrl+N 新建　Ctrl+O 打开　Ctrl+S 保存　Ctrl+W 关闭标签\n" +
+                "Ctrl+Tab / Ctrl+Shift+Tab 切换标签　Ctrl+Shift+F 文件夹搜索\n" +
+                "Ctrl+F 查找 / 替换　F3 查找下一个　Esc 关闭查找栏\n" +
+                "Ctrl+= 放大　Ctrl+- 缩小　Ctrl+0 重置缩放　F11 全屏\n" +
+                "Ctrl+P 打印　F5 重新加载　Ctrl+滚轮 缩放",
+                "快捷键", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void OpenLogDir_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Directory.CreateDirectory(AppPaths.LogDir);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppPaths.LogDir)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("打开日志目录失败：" + ex.Message);
+            }
+        }
+
+        // ---------- 标签右键菜单 ----------
+
+        private async void TabMenu_Close(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is TabDoc tab) await CloseTabAsync(tab);
+        }
+
+        private async void TabMenu_CloseOthers(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is not TabDoc tab) return;
+            await CloseTabsAsync(_tabs.Where(t => !ReferenceEquals(t, tab)).ToList());
+        }
+
+        private async void TabMenu_CloseRight(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is not TabDoc tab) return;
+            var idx = _tabs.IndexOf(tab);
+            if (idx < 0) return;
+            await CloseTabsAsync(_tabs.Skip(idx + 1).ToList());
+        }
+
+        private async Task CloseTabsAsync(IEnumerable<TabDoc> tabs)
+        {
+            foreach (var tab in tabs.ToList())
+            {
+                if (!_tabs.Contains(tab)) continue;
+                await CloseTabAsync(tab);
+            }
+        }
+
+        private void TabMenu_CopyPath(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is not TabDoc tab) return;
+            if (string.IsNullOrEmpty(tab.FilePath))
+            {
+                StatusText.Text = "未命名文档还没有文件路径";
+                return;
+            }
+            try
+            {
+                Clipboard.SetText(tab.FilePath);
+                StatusText.Text = "已复制路径：" + tab.FilePath;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("复制路径失败：" + ex.Message);
+            }
+        }
+
+        private void TabMenu_Reveal(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is not TabDoc tab ||
+                string.IsNullOrEmpty(tab.FilePath)) return;
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{tab.FilePath}\"");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("打开资源管理器失败：" + ex.Message);
+            }
+        }
+
+        private async void TabMenu_Reload(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.DataContext is not TabDoc tab) return;
+            Tabs.SelectedItem = tab;
+            await Task.Yield();
+            Reload_Click(sender, new RoutedEventArgs());
+        }
+
+        /// <summary>外部进程（第二个实例）请求打开文件。</summary>
+        public async void OpenFromShell(IEnumerable<string> files)
+        {
+            foreach (var f in files)
+            {
+                if (File.Exists(f) && IsTextDocument(f)) await OpenTabAsync(f);
+            }
+            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+            Activate();
+        }
+
+        /// <summary>由另一个实例转发参数时调用（静态入口）。</summary>
+        public static void RouteExternalOpen(IEnumerable<string> files)
+        {
+            var win = AllWindows.FirstOrDefault(w => !w._isFloating && w.IsLoaded)
+                      ?? AllWindows.FirstOrDefault(w => w.IsLoaded);
+            win?.OpenFromShell(files);
         }
 
         private void OpenFile_Click(object sender, RoutedEventArgs e)
@@ -1216,6 +2273,7 @@ namespace MarkdownViewer
                 tab.EditText = null;
                 tab.IsDirty = false;
                 if (_webReady) PushMarkdown(tab, reset: true);
+                RefreshWindowTitle();   // IsDirty 变更不会自动刷新窗口标题
                 StatusText.Text = "已重新加载：" + tab.FilePath;
             }
             catch (Exception ex)
@@ -1264,15 +2322,26 @@ namespace MarkdownViewer
             e.Handled = true;
         }
 
-        private void Window_Drop(object sender, DragEventArgs e)
+        private static readonly string[] TextExts =
+            { ".md", ".markdown", ".mdx", ".mdown", ".mkd", ".txt", ".text" };
+
+        private static bool IsTextDocument(string path) =>
+            TextExts.Contains(Path.GetExtension(path).ToLowerInvariant());
+
+        private async void Window_Drop(object sender, DragEventArgs e)
         {
             if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
             {
-                // 一次拖入多个文件：全部作为标签打开
+                var ignored = 0;
+                // 一次拖入多个文件：按顺序依次打开（后台读取，不阻塞界面）
                 foreach (var f in files)
                 {
-                    if (File.Exists(f)) OpenTab(f);
+                    if (!File.Exists(f)) continue;
+                    if (IsTextDocument(f)) await OpenTabAsync(f);
+                    else ignored++;
                 }
+                if (ignored > 0)
+                    StatusText.Text = $"已忽略 {ignored} 个非文本文件（支持 .md/.markdown/.mdx/.txt）";
             }
         }
     }
@@ -1321,6 +2390,11 @@ namespace MarkdownViewer
 
         /// <summary>跨窗口弹出/合并时保留的正文滚动位置。</summary>
         public double ScrollY { get; set; }
+
+        /// <summary>会话恢复用：光标行/列与编辑器滚动位置。</summary>
+        public int RestoreLine { get; set; }
+        public int RestoreCh { get; set; }
+        public double? RestoreEditorScroll { get; set; }
 
         public List<TocItem> TocRoots { get; } = new();
 

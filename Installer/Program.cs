@@ -8,7 +8,7 @@ namespace MarkdownViewerInstaller;
 internal static class Program
 {
     public const string AppName = "MarkdownViewer";
-    public const string AppVersion = "1.0.0";
+    public const string AppVersion = "1.1.0";
     public const string Publisher = "tobegmup";
     public static readonly string ExeName = $"{AppName}.exe";
     public const string UninstallExeName = "Uninstall.exe";
@@ -97,21 +97,29 @@ internal static class Program
         var uninstallPath = Path.Combine(installDir, UninstallExeName);
 
         log?.Invoke("正在关闭正在运行的 MarkdownViewer...");
-        KillApp();
-
-        // 覆盖安装时，如果旧版本装在别的目录，先清理旧目录
+        // 覆盖安装时，如果旧版本装在别的目录，也一并处理
         var oldDir = GetRegisteredInstallDir();
+        KillApp(installDir, oldDir);
+
+        // 如果旧版本装在别的目录，先清理旧目录（仅删除本程序文件）
         if (!string.IsNullOrEmpty(oldDir) &&
             !string.Equals(Path.GetFullPath(oldDir), installDir, StringComparison.OrdinalIgnoreCase))
         {
             log?.Invoke("检测到旧版本，正在清理旧目录...");
-            TryDelete(oldDir);
+            DeleteInstalledFiles(oldDir);
+            TryDeleteIfEmpty(oldDir);
         }
 
         log?.Invoke("正在解压程序文件...");
         if (Directory.Exists(installDir))
         {
-            TryDelete(installDir);
+            // 仅当目录看起来确实是本程序的安装目录时才整体清理；
+            // 避免用户把安装路径填成 D:\Tools 这类已有目录时误删其中的文件
+            var looksLikeOurs =
+                File.Exists(Path.Combine(installDir, ExeName)) ||
+                File.Exists(Path.Combine(installDir, UninstallExeName)) ||
+                File.Exists(Path.Combine(installDir, "version.txt"));
+            if (looksLikeOurs) DeleteInstalledFiles(installDir);
         }
         try
         {
@@ -194,14 +202,15 @@ internal static class Program
 
     public static void UninstallCore(Action<string>? log)
     {
-        log?.Invoke("正在关闭正在运行的 MarkdownViewer...");
-        KillApp();
-        Thread.Sleep(800);
-
         var installDir = GetRegisteredInstallDir() ?? DefaultInstallDir;
 
+        log?.Invoke("正在关闭正在运行的 MarkdownViewer...");
+        KillApp(installDir);
+        Thread.Sleep(800);
+
         log?.Invoke("正在删除程序文件...");
-        TryDelete(installDir);
+        DeleteInstalledFiles(installDir);
+        TryDeleteIfEmpty(installDir);
 
         log?.Invoke("正在删除快捷方式...");
         TryDelete(Path.Combine(
@@ -314,12 +323,86 @@ internal static class Program
         sc.Save();
     }
 
-    private static void KillApp()
+    /// <summary>
+    /// 只结束从指定安装目录运行的 MarkdownViewer 进程，
+    /// 不影响其它位置（如绿色版）正在运行的副本。
+    /// </summary>
+    private static void KillApp(params string?[] installDirs)
     {
+        var roots = installDirs
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(d => Path.GetFullPath(d!).TrimEnd('\\') + "\\")
+            .ToList();
+        if (roots.Count == 0) return;
+
         foreach (var p in Process.GetProcessesByName(AppName))
         {
-            try { p.Kill(); p.WaitForExit(3000); }
-            catch { /* 忽略 */ }
+            try
+            {
+                var path = p.MainModule?.FileName;
+                if (string.IsNullOrEmpty(path)) continue; // 读不到路径时不贸然结束
+                var full = Path.GetFullPath(path);
+                if (!roots.Any(r => full.StartsWith(r, StringComparison.OrdinalIgnoreCase))) continue;
+                p.Kill();
+                p.WaitForExit(3000);
+            }
+            catch
+            {
+                // 忽略单个进程
+            }
+        }
+    }
+
+    /// <summary>安装目录里属于本程序的文件/子目录（卸载与升级只删这些）。</summary>
+    private static readonly string[] AppFiles =
+    {
+        "MarkdownViewer.exe", "MarkdownViewer.dll", "MarkdownViewer.deps.json",
+        "MarkdownViewer.runtimeconfig.json", "Uninstall.exe", "version.txt",
+        "WebView2Loader.dll", "app.ico", "LICENSE", "THIRD-PARTY-NOTICES.md"
+    };
+
+    private static readonly string[] AppDirs =
+    {
+        "WebAssets", "runtimes", "MarkdownViewer.exe.WebView2", "userdata"
+    };
+
+    /// <summary>删除本程序自身文件，保留用户放在安装目录里的其它文件。</summary>
+    private static void DeleteInstalledFiles(string installDir)
+    {
+        if (!Directory.Exists(installDir)) return;
+
+        foreach (var name in AppFiles)
+            TryDeleteFile(Path.Combine(installDir, name));
+
+        foreach (var dir in AppDirs)
+            TryDelete(Path.Combine(installDir, dir));
+
+        // WebView2/WPF 运行时相关 dll、xml（按前缀清理）
+        foreach (var pattern in new[] { "Microsoft.Web.WebView2.*", "*.pdb" })
+        {
+            try
+            {
+                foreach (var file in Directory.GetFiles(installDir, pattern))
+                    TryDeleteFile(file);
+            }
+            catch
+            {
+                // 忽略
+            }
+        }
+    }
+
+    /// <summary>目录为空时删除目录本身。</summary>
+    private static void TryDeleteIfEmpty(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                Directory.Delete(dir, false);
+        }
+        catch
+        {
+            // 忽略
         }
     }
 
@@ -407,7 +490,7 @@ public class InstallForm : Form
 
         var title = new Label
         {
-            Text = "MarkdownViewer 1.0.0",
+            Text = "MarkdownViewer 1.1.0",
             Left = 24, Top = 18, Width = 480, Height = 34,
             Font = new Font("Microsoft YaHei UI", 16, FontStyle.Bold)
         };
@@ -459,7 +542,12 @@ public class InstallForm : Form
         };
         if (dlg.ShowDialog(this) == DialogResult.OK)
         {
-            _txtDir.Text = Path.Combine(dlg.SelectedPath, Program.AppName);
+            var picked = dlg.SelectedPath.TrimEnd('\\', '/');
+            // 用户选中的已经是程序目录（名称就是 MarkdownViewer）时不再嵌套一层
+            _txtDir.Text = string.Equals(Path.GetFileName(picked), Program.AppName,
+                StringComparison.OrdinalIgnoreCase)
+                ? picked
+                : Path.Combine(picked, Program.AppName);
         }
     }
 
