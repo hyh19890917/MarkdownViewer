@@ -345,6 +345,9 @@
                             Click="InsertImage_Click"/>
                     <Button Style="{StaticResource RibbonButton}" Content="插入表格"
                             Click="InsertTable_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="插入流程图"
+                            Click="InsertMermaid_Click"
+                            ToolTip="打开 Mermaid 编辑器，双击已有图表也可编辑"/>
                     <Button Style="{StaticResource RibbonButton}" Content="插入代码块"
                             Click="InsertCodeBlock_Click"/>
                     <Button Style="{StaticResource RibbonButton}" Content="插入任务列表"

@@ -2217,8 +2217,27 @@ namespace MarkdownViewer
             PostToWeb(new { type = "insert", tabId = tab?.Id.ToString(), text });
         }
 
-        private void InsertTable_Click(object sender, RoutedEventArgs e) =>
-            InsertMarkdown("| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n");
+        private void InsertTable_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab == null)
+            {
+                StatusText.Text = "请先打开或新建一个文档";
+                return;
+            }
+            var dlg = new TableInsertDialog(this);
+            if (dlg.ShowDialog() != true) return;
+            InsertMarkdown(dlg.BuildMarkdown());
+        }
+
+        private void InsertMermaid_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab == null)
+            {
+                StatusText.Text = "请先打开或新建一个文档";
+                return;
+            }
+            PostToWeb(new { type = "mermaidEditor" });
+        }
 
         private void InsertCodeBlock_Click(object sender, RoutedEventArgs e) =>
             InsertMarkdown("```text\n\n```\n");

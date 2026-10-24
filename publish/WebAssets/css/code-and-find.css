@@ -237,10 +237,170 @@ body.theme-dark .hljs-meta { color: #9da5b4; }
 
 .markdown-body img { cursor: zoom-in; }
 
+/* ===================== Mermaid 编辑弹窗 ===================== */
+.mermaid-editor {
+    position: fixed;
+    inset: 0;
+    z-index: 2400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.62);
+}
+
+.mermaid-editor[hidden] { display: none; }
+
+.mermaid-editor-box {
+    display: flex;
+    flex-direction: column;
+    width: min(1040px, 94vw);
+    height: min(760px, 88vh);
+    border: 1px solid #d0d7de;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #ffffff;
+    color: #24292f;
+    box-shadow: 0 16px 60px rgba(0, 0, 0, 0.42);
+}
+
+.mermaid-editor-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #d0d7de;
+    font-size: 14px;
+    font-weight: 600;
+    background: #f6f8fa;
+}
+
+.mermaid-editor-head button,
+.mermaid-editor-foot button {
+    padding: 4px 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: #f6f8fa;
+    color: #24292f;
+    cursor: pointer;
+}
+
+.mermaid-editor-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+#mermaid-source {
+    width: 43%;
+    min-width: 220px;
+    height: 100%;
+    box-sizing: border-box;
+    resize: none;
+    padding: 12px;
+    border: 0;
+    border-right: 1px solid #d0d7de;
+    outline: none;
+    background: #ffffff;
+    color: #24292f;
+    font-family: Consolas, "Cascadia Code", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.mermaid-editor-preview {
+    flex: 1;
+    overflow: auto;
+    padding: 18px;
+    background: #ffffff;
+    text-align: center;
+}
+
+.mermaid-editor-preview svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.mermaid-editor-foot {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 9px 14px;
+    border-top: 1px solid #d0d7de;
+    background: #f6f8fa;
+    font-size: 12px;
+}
+
+#mermaid-editor-hint {
+    margin-right: auto;
+    color: #57606a;
+}
+
+#mermaid-editor-apply {
+    background: #0969da;
+    border-color: #0969da;
+    color: #ffffff;
+}
+
+body.theme-green .mermaid-editor-box,
+body.theme-green #mermaid-source,
+body.theme-green .mermaid-editor-preview { background: #f4fbf4; color: #233423; }
+body.theme-green .mermaid-editor-head,
+body.theme-green .mermaid-editor-foot { background: #e7f6e8; border-color: #93c59c; }
+body.theme-green #mermaid-source { border-right-color: #93c59c; }
+body.theme-green .mermaid-editor-head button,
+body.theme-green .mermaid-editor-foot button { background: #d6efd8; border-color: #93c59c; color: #233423; }
+body.theme-green #mermaid-editor-hint { color: #3d5a40; }
+
+body.theme-dark .mermaid-editor-box,
+body.theme-dark #mermaid-source,
+body.theme-dark .mermaid-editor-preview { background: #1e1e1e; color: #d4d4d4; border-color: #3c3c3c; }
+body.theme-dark .mermaid-editor-head,
+body.theme-dark .mermaid-editor-foot { background: #252526; border-color: #3c3c3c; }
+body.theme-dark #mermaid-source { border-right-color: #3c3c3c; }
+body.theme-dark .mermaid-editor-head button,
+body.theme-dark .mermaid-editor-foot button { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
+body.theme-dark #mermaid-editor-hint { color: #9da5b4; }
+
+.mermaid-editor-preview .mermaid-error {
+    color: #cf222e;
+    text-align: left;
+    white-space: pre-wrap;
+    font-family: Consolas, "Courier New", monospace;
+}
+
+body.theme-dark .mermaid-editor-preview .mermaid-error { color: #f48771; }
+
+/* 图表右上角的编辑按钮 */
+.markdown-body .mermaid { position: relative; }
+.markdown-body .mermaid-edit-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 3;
+    padding: 2px 8px;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #24292f;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.markdown-body .mermaid:hover .mermaid-edit-btn { opacity: 1; }
+body.theme-dark .markdown-body .mermaid-edit-btn {
+    background: rgba(45, 45, 48, 0.92);
+    border-color: #3c3c3c;
+    color: #e6edf3;
+}
+
 /* ===================== 打印 / 导出 PDF ===================== */
 @media print {
     html, body { height: auto; overflow: visible; background: #ffffff; }
-    #editor-pane, #edit-splitter, .find-bar, .lightbox, .copy-code { display: none !important; }
+    #editor-pane, #edit-splitter, .find-bar, .lightbox, .copy-code,
+    .mermaid-editor, .mermaid-edit-btn { display: none !important; }
     #workbench { display: block; height: auto; }
     #preview-pane { display: block !important; overflow: visible; height: auto; }
     .markdown-body { max-width: none; padding: 0; }

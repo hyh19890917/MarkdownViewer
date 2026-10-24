@@ -14,6 +14,10 @@
     var previewPane = document.getElementById("preview-pane");
     var editorPane = document.getElementById("editor-pane");
     var workbench = document.getElementById("workbench");
+    var mermaidEditor = document.getElementById("mermaid-editor");
+    var mermaidSource = document.getElementById("mermaid-source");
+    var mermaidPreview = document.getElementById("mermaid-preview");
+    var mermaidEditorHint = document.getElementById("mermaid-editor-hint");
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -354,6 +358,9 @@
     var refreshTimer = null;
     var findInputTimer = null;
     var mermaidTimer = null;
+    var mermaidPreviewTimer = null;
+    var mermaidPreviewSeq = 0;
+    var mermaidEditIndex = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -472,6 +479,7 @@
         var root = document.getElementById("md-body");
 
         var codeBlocks = root.querySelectorAll("pre > code.language-mermaid");
+        var mermaidIndex = 0;
         for (var i = 0; i < codeBlocks.length; i++) {
             var code = codeBlocks[i];
             var pre = code.parentNode;
@@ -480,6 +488,7 @@
             var div = document.createElement("div");
             div.className = "mermaid";
             div.setAttribute("data-mermaid-src", source);
+            div.setAttribute("data-mermaid-index", String(mermaidIndex++));
             div.textContent = source;
             pre.parentNode.replaceChild(div, pre);
         }
@@ -517,21 +526,182 @@
             var result = window.mermaid.run
                 ? window.mermaid.run({ nodes: todo, suppressErrors: true })
                 : window.mermaid.init(undefined, todo);
-            if (result && result.catch) {
-                result.catch(function (err) {
+            if (result && typeof result.then === "function") {
+                result.then(decorateMermaidNodes, function (err) {
                     console.warn("Mermaid render failed", err);
                     todo.forEach(function (node) {
                         if (node.getAttribute("data-processed") !== "true") {
                             node.classList.add("mermaid-error");
                         }
                     });
+                    decorateMermaidNodes();
                 });
+            } else {
+                decorateMermaidNodes();
             }
         } catch (e) {
             console.warn("Mermaid render failed", e);
             todo.forEach(function (node) { node.classList.add("mermaid-error"); });
+            decorateMermaidNodes();
         }
     }
+
+    /* 在每个图表右上角加“编辑”按钮（Mermaid 渲染会替换内容，需在渲染后重建） */
+    function decorateMermaidNodes() {
+        var root = document.getElementById("md-body");
+        var nodes = root.querySelectorAll(".mermaid");
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            if (node.querySelector(".mermaid-edit-btn")) continue;
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "mermaid-edit-btn";
+            btn.textContent = "编辑";
+            btn.title = "编辑 Mermaid 源码";
+            btn.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var target = e.currentTarget.parentNode;
+                openMermaidEditor(target.getAttribute("data-mermaid-index"),
+                    target.getAttribute("data-mermaid-src"));
+            });
+            node.appendChild(btn);
+        }
+    }
+
+    /* ===================== Mermaid 编辑弹窗 ===================== */
+    var MERMAID_TEMPLATE = "flowchart TD\n  A[开始] --> B{条件}\n  B -->|是| C[结束]\n  B -->|否| A\n";
+
+    function openMermaidEditor(index, source) {
+        if (!mermaidEditor) return;
+        var parsed = (index === null || index === undefined || index === "") ? null : parseInt(index, 10);
+        mermaidEditIndex = isNaN(parsed) ? null : parsed;
+        mermaidSource.value = (typeof source === "string" && source.trim())
+            ? source
+            : (mermaidEditIndex === null ? MERMAID_TEMPLATE : "");
+        mermaidEditorHint.textContent = mermaidEditIndex === null
+            ? "新建图表：Ctrl+Enter 应用 · Esc 取消"
+            : "编辑图表 " + (mermaidEditIndex + 1) + "：Ctrl+Enter 应用 · Esc 取消";
+        mermaidEditor.hidden = false;
+        updateMermaidPreview();
+        setTimeout(function () {
+            mermaidSource.focus();
+            mermaidSource.select();
+        }, 30);
+    }
+
+    function closeMermaidEditor() {
+        if (!mermaidEditor) return;
+        mermaidEditor.hidden = true;
+        mermaidPreviewSeq++;
+        mermaidPreview.innerHTML = "";
+        if (mermaidPreviewTimer) {
+            clearTimeout(mermaidPreviewTimer);
+            mermaidPreviewTimer = null;
+        }
+        if (viewMode !== "preview") cm.focus();
+    }
+
+    function updateMermaidPreview() {
+        if (!window.mermaid || !mermaidPreview) return;
+        var source = mermaidSource.value.trim();
+        if (!source) {
+            mermaidPreview.innerHTML = '<div class="mermaid-error">请输入 Mermaid 语法</div>';
+            return;
+        }
+        try {
+            window.mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: mermaidThemeName()
+            });
+        } catch (e) {
+            console.warn("Mermaid preview initialize failed", e);
+        }
+        var seq = ++mermaidPreviewSeq;
+        try {
+            var result = window.mermaid.render("mermaid-editor-preview-" + seq, source);
+            Promise.resolve(result).then(function (res) {
+                if (seq !== mermaidPreviewSeq) return;
+                var svg = typeof res === "string" ? res : (res && res.svg);
+                mermaidPreview.innerHTML = svg || "";
+            }).catch(function (err) {
+                if (seq !== mermaidPreviewSeq) return;
+                mermaidPreview.innerHTML =
+                    '<div class="mermaid-error">' + escapeHtml(String(err && err.message || err)) + "</div>";
+            });
+        } catch (err) {
+            mermaidPreview.innerHTML =
+                '<div class="mermaid-error">' + escapeHtml(String(err && err.message || err)) + "</div>";
+        }
+    }
+
+    /* 按第 N 个 mermaid 代码块替换源码（N 从 0 开始，与渲染顺序一致） */
+    function replaceMermaidBlock(index, source) {
+        var text = cm.getValue();
+        var re = /```mermaid[^\n]*\n([\s\S]*?)```/g;
+        var i = 0;
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            if (i === index) {
+                var block = "```mermaid\n" + source + "\n```";
+                cm.replaceRange(block,
+                    cm.posFromIndex(m.index), cm.posFromIndex(re.lastIndex));
+                return true;
+            }
+            i++;
+        }
+        return false;
+    }
+
+    function applyMermaidEditor() {
+        var source = mermaidSource.value.trim();
+        if (!source) {
+            postMessage({ type: "status", text: "Mermaid 源码不能为空" });
+            return;
+        }
+        if (mermaidEditIndex === null) {
+            insertTextAtCursor("```mermaid\n" + source + "\n```\n");
+        } else if (!replaceMermaidBlock(mermaidEditIndex, source)) {
+            postMessage({ type: "status", text: "未找到对应的 mermaid 代码块，可能已被外部修改" });
+            return;
+        }
+        closeMermaidEditor();
+    }
+
+    if (mermaidEditor) {
+        document.getElementById("mermaid-editor-close").addEventListener("click", closeMermaidEditor);
+        document.getElementById("mermaid-editor-cancel").addEventListener("click", closeMermaidEditor);
+        document.getElementById("mermaid-editor-apply").addEventListener("click", applyMermaidEditor);
+        mermaidSource.addEventListener("input", function () {
+            if (mermaidPreviewTimer) clearTimeout(mermaidPreviewTimer);
+            mermaidPreviewTimer = setTimeout(updateMermaidPreview, 250);
+        });
+        mermaidEditor.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeMermaidEditor();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                applyMermaidEditor();
+            }
+        });
+        mermaidEditor.addEventListener("click", function (e) {
+            if (e.target === mermaidEditor) closeMermaidEditor();
+        });
+    }
+
+    /* 双击图表直接打开源码编辑器 */
+    document.getElementById("md-body").addEventListener("dblclick", function (e) {
+        if (e.target && e.target.closest && e.target.closest(".mermaid-edit-btn")) return;
+        var node = e.target && e.target.closest ? e.target.closest(".mermaid") : null;
+        if (!node) return;
+        e.preventDefault();
+        openMermaidEditor(node.getAttribute("data-mermaid-index"),
+            node.getAttribute("data-mermaid-src"));
+    });
 
     /* ===================== 渲染 ===================== */
     function renderMarkdown(source, tabId, restoreScroll, force) {
@@ -701,6 +871,7 @@
         ]).then(function (parts) {
             var body = document.getElementById("md-body").cloneNode(true);
             body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".mermaid-edit-btn").forEach(function (b) { b.remove(); });
             body.querySelectorAll("mark.find-hit").forEach(function (m) {
                 m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
             });
@@ -1646,6 +1817,8 @@
             applyTheme(data.mode);
         } else if (data.type === "view") {
             setView(data.mode);
+        } else if (data.type === "mermaidEditor") {
+            openMermaidEditor(null, data.source || null);
         } else if (data.type === "saved") {
             // 保存成功：以“实际写入磁盘的文本”作为新基线；保存期间新增的编辑仍保持未保存状态
             var sb = buffers[data.tabId];
@@ -1707,6 +1880,7 @@
     // 焦点不在 CodeMirror 中时（如点击预览/目录）也能用 Ctrl+S 保存
     // Ctrl+W 关闭当前标签；Ctrl+Tab / Ctrl+Shift+Tab 切换标签
     window.addEventListener("keydown", function (e) {
+        if (mermaidEditor && !mermaidEditor.hidden) return; // 图表弹窗自行处理 Esc/Ctrl+Enter
         if (e.key === "F5") {
             e.preventDefault();
             postMessage({ type: "reload" });

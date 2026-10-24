@@ -62,6 +62,26 @@
     <img id="lightbox-img" alt="图片预览"/>
 </div>
 
+<!-- Mermaid 图表编辑弹窗 -->
+<div id="mermaid-editor" class="mermaid-editor" hidden>
+    <div class="mermaid-editor-box">
+        <div class="mermaid-editor-head">
+            <span>流程图 / 图表编辑</span>
+            <button id="mermaid-editor-close" type="button" title="关闭（Esc）">✕</button>
+        </div>
+        <div class="mermaid-editor-body">
+            <textarea id="mermaid-source" spellcheck="false"
+                      placeholder="输入 Mermaid 语法，例如 flowchart TD ..."></textarea>
+            <div id="mermaid-preview" class="mermaid-editor-preview"></div>
+        </div>
+        <div class="mermaid-editor-foot">
+            <span id="mermaid-editor-hint">Ctrl+Enter 应用 · Esc 取消</span>
+            <button id="mermaid-editor-cancel" type="button">取消</button>
+            <button id="mermaid-editor-apply" type="button">应用</button>
+        </div>
+    </div>
+</div>
+
 <script src="vendor/codemirror/codemirror.min.js"></script>
 <script src="vendor/codemirror/mode/xml/xml.min.js"></script>
 <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>

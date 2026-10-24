@@ -8,7 +8,7 @@ namespace MarkdownViewerInstaller;
 internal static class Program
 {
     public const string AppName = "MarkdownViewer";
-    public const string AppVersion = "1.2.0";
+    public const string AppVersion = "1.2.1";
     public const string Publisher = "tobegmup";
     public static readonly string ExeName = $"{AppName}.exe";
     public const string UninstallExeName = "Uninstall.exe";
@@ -560,7 +560,7 @@ public class InstallForm : Form
 
         var title = new Label
         {
-            Text = "MarkdownViewer 1.2.0",
+            Text = "MarkdownViewer 1.2.1",
             Left = 24, Top = 18, Width = 480, Height = 34,
             Font = new Font("Microsoft YaHei UI", 16, FontStyle.Bold)
         };
