@@ -9,7 +9,7 @@ namespace MarkdownViewer
     /// <summary>「关于 MarkdownViewer」对话框：版本、发布时间、作者与开源协议。</summary>
     public partial class AboutWindow : Window
     {
-        public const string ReleaseDate = "2026-10-19";
+        public const string ReleaseDate = "2026-10-24";
         public const string Author = "tobegmup";
         public const string LicenseName = "GNU General Public License v3.0";
 
@@ -26,7 +26,7 @@ namespace MarkdownViewer
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             VersionText.Text = version != null
                 ? $"{version.Major}.{version.Minor}.{version.Build}"
-                : "1.1.0";
+                : "1.1.1";
             ReleaseText.Text = ReleaseDate;
             AuthorText.Text = Author;
             LicenseText.Text = LicenseName;

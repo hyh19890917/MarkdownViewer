@@ -368,6 +368,10 @@
                     <ToggleButton x:Name="TypewriterToggle" Content="打字机模式"
                                   Style="{StaticResource RibbonToggle}"
                                   Click="TypewriterToggle_Click"/>
+                    <ToggleButton x:Name="AutoSaveToggle" Content="自动保存"
+                                  Style="{StaticResource RibbonToggle}"
+                                  Click="AutoSaveToggle_Click"
+                                  ToolTip="定时保存有未保存修改的文件"/>
                     <Border Style="{StaticResource RibbonSeparator}"/>
                     <Button Style="{StaticResource RibbonButton}" Content="放大"
                             Click="ZoomIn_Click" ToolTip="Ctrl+="/>

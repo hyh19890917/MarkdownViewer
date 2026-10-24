@@ -4,7 +4,7 @@
 
 一个独立、轻量的 Markdown 阅读与编辑器，带目录（TOC）、分栏实时预览，以及浅色 / 护眼绿 / 暗黑三套主题。
 
-> **当前版本**：1.1.0 ｜ **发布日期**：2026-10-19 ｜ **作者**：tobegmup
+> **当前版本**：1.1.1 ｜ **发布日期**：2026-10-24 ｜ **作者**：tobegmup
 >
 > **开源协议**：本项目以 [GNU GPL v3](LICENSE) 发布。第三方组件（markdown-it、CodeMirror、WebView2 等）版权声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
@@ -13,7 +13,7 @@
 | 方式 | 做法 | 说明 |
 |------|------|------|
 | **绿色版**（免安装） | 下载仓库中的 `publish/` 文件夹，**整个文件夹**拷贝到任意目录，双击 `MarkdownViewer.exe` | 不写注册表、不建快捷方式、不关联文件类型；删文件夹即卸载。需 .NET 8 Desktop Runtime |
-| **安装包** | `Setup/MarkdownViewer-Setup-1.1.0.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
+| **安装包** | `Setup/MarkdownViewer-Setup-1.1.1.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
 
 详见下文「[绿色版](#绿色版免安装直接拷贝使用)」与「[安装包](#安装包安装器--payloadzip)」。
 
@@ -51,12 +51,12 @@
 - **导出与打印**：导出 HTML（内联样式，可单独分发）、导出 PDF（WebView2 打印引擎）与打印
 - **会话恢复**：启动时恢复上次的标签、滚动位置、光标、视图模式、主题、目录宽度、分栏比例与窗口布局
 - **最近打开**：文件菜单保留最近 12 个文档
-- **自动保存**：默认每 30 秒静默保存有路径的已修改文档（可关闭）
-- **外部修改提示**：当前文件被其它程序修改时提示是否重新加载
-- **文件夹搜索**：`Ctrl+Shift+F` 在当前文件所在目录递归搜索 Markdown/文本，双击结果跳转到对应行
+- **自动保存**：默认每 30 秒静默保存有路径的已修改文档，可在「视图」功能区一键开关；编码为自动推测的文件会跳过自动保存，避免误改原文件编码
+- **外部修改提示**：当前文件被其它程序修改时提示是否重新加载；若本地还有未保存修改，会明确询问「重新加载（丢弃本地修改）」还是「保留本地修改」
+- **文件夹搜索**：`Ctrl+Shift+F` 在当前文件所在目录递归搜索 Markdown/文本，双击结果跳转到对应行；支持中途「停止」、跳过符号链接、结果过多时提示截断
 - **标签右键菜单**：关闭 / 关闭其他 / 关闭右侧 / 复制路径 / 在资源管理器中显示 / 重新加载
 - **单实例**：重复双击 `.md` 时复用已打开窗口，不会起多个 Chromium 内核
-- **编码菜单**：UTF-8 / UTF-8 BOM / UTF-16 LE/BE / GB18030 手动切换并按所选编码写回；新增 UTF-16 无 BOM 启发式识别
+- **编码菜单**：UTF-8 / UTF-8 BOM / UTF-16 LE/BE / GB18030 手动选择保存编码；「以当前编码重新读取」用于修正乱码；UTF-16 无 BOM 启发式识别，推测编码在保存前会提示确认
 - **快捷键**：`Ctrl+N` 新建、`Ctrl+S` 保存、`Ctrl+Shift+S` 另存为、`Ctrl+O` 打开、`Ctrl+W` 关闭当前标签、`Ctrl+Tab` / `Ctrl+Shift+Tab` 切换标签、`Ctrl+P` 打印、`F11` 全屏、`F5` 重新加载
 - 菜单「文件 → 新建」或 `Ctrl+N` 创建未命名文档（如 `未命名-1.md`），首次保存时再选择文件路径
 - **Office 风格功能区**：顶部「文件 / 编辑 / 视图 / 编码 / 帮助」标签，**选中不同标签，下方工具栏自动切换为该组命令**（新建/打开/最近/导出/打印；查找/插入；视图与缩放；编码；帮助），底部状态栏常驻显示路径与编码
@@ -65,8 +65,8 @@
 - 命令行参数打开：`MarkdownViewer.exe 文档1.md 文档2.md`
 - GFM 表格、任务列表（带勾选框）、代码块、链接自动识别
 - md 中相对路径图片可正常显示（文件所在目录映射为 `https://mdfile.local/`）
-- 预览中点击页内锚点平滑跳转；点击相对路径的 `.md` 链接会作为新标签打开，其它文件交给系统默认程序
-- 外链交给系统浏览器打开（WebView 不会离开应用页面）
+- 预览中点击页内锚点平滑跳转；点击相对路径的 `.md` 链接会作为新标签打开，其它文档/图片交给系统默认程序，可执行文件等高风险类型会先弹出确认
+- 外链交给系统浏览器打开（WebView 不会离开应用页面）；导出 HTML 时自动把相对图片改为 `file:///` 绝对路径
 
 ## 目录结构
 
@@ -99,7 +99,7 @@ markdownviewer/
 │   ├── MarkdownViewer.exe           # 双击直接运行
 │   └── WebAssets/ runtimes/ ...     # 需与 exe 保持同级目录结构
 ├── Setup/
-│   ├── MarkdownViewer-Setup-1.1.0.exe   # 安装器（自包含 .NET 运行时，<100MB）
+│   ├── MarkdownViewer-Setup-1.1.1.exe   # 安装器（自包含 .NET 运行时，<100MB）
 │   └── payload.zip                      # 主程序载荷，安装时复制到安装目录
 ├── LICENSE                          # GNU GPL v3 许可证
 ├── THIRD-PARTY-NOTICES.md           # 第三方组件版权声明
@@ -138,7 +138,7 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 
 安装包由**两个文件**组成，必须放在同一目录：
 
-- `Setup\MarkdownViewer-Setup-1.1.0.exe`：安装器（自包含 .NET 运行时，约 70MB）
+- `Setup\MarkdownViewer-Setup-1.1.1.exe`：安装器（自包含 .NET 运行时，约 70MB）
 - `Setup\payload.zip`：主程序载荷（约 66MB）
 
 > 安装器不再把载荷内嵌到自身，避免单文件超过 GitHub 100MB 限制。安装时从安装器所在目录读取 `payload.zip` 并解压到用户选择的安装目录；如果缺少该文件，安装器会提示两者需放在同一目录。
@@ -148,9 +148,10 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 - 选择 `Program Files` 等系统目录时需以管理员身份运行安装包（无写权限会给出明确提示）
 - 可选：开始菜单快捷方式、桌面快捷方式、关联 `.md/.markdown/.mdx`
 - 写入「设置 → 应用 → 已安装的应用」卸载条目，支持完整卸载（含文件、快捷方式、关联清理）；卸载路径从注册表读取，自定义目录也能正确清理
-- 覆盖安装时若旧版本位于其他目录，会自动清理旧目录
-- 静默安装/卸载：`MarkdownViewer-Setup-1.1.0.exe /silent`、`Uninstall.exe /uninstall /silent`
-- 指定目录静默安装：`MarkdownViewer-Setup-1.1.0.exe /silent /DIR="D:\Apps\MarkdownViewer"`
+- 覆盖安装时若旧版本位于其他目录，会自动迁移 `userdata` 并清理旧目录
+- **升级安全**：先把 `payload.zip` 解压到临时目录并校验主程序存在，确认无误后才清理旧版本；解压/复制失败不会先把旧安装删一半；升级保留 `userdata`（设置、会话、草稿），卸载时才清理
+- 静默安装/卸载：`MarkdownViewer-Setup-1.1.1.exe /silent`、`Uninstall.exe /uninstall /silent`
+- 指定目录静默安装：`MarkdownViewer-Setup-1.1.1.exe /silent /DIR="D:\Apps\MarkdownViewer"`
 
 ### 重新构建安装包
 
@@ -165,7 +166,7 @@ Compress-Archive -Path build-payload\* -DestinationPath Installer\payload.zip -F
 dotnet publish Installer\Installer.csproj -c Release -r win-x64 `
   --self-contained true -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true -o build-setup
-Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.1.0.exe -Force
+Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.1.1.exe -Force
 Copy-Item Installer\payload.zip Setup\payload.zip -Force
 ```
 

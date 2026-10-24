@@ -32,6 +32,8 @@ namespace MarkdownViewer
         // ---- 用户设置 / 自动保存 / 外部修改监听 ----
         private AppSettings _settings = new();
         private DispatcherTimer? _autoSaveTimer;
+        private DispatcherTimer? _draftTimer;
+        private bool _draftSaving;
         private FileSystemWatcher? _watcher;
         private string? _watchedPath;
         private DateTime _lastKnownWriteUtc;
@@ -42,6 +44,10 @@ namespace MarkdownViewer
         private WindowState _prevWindowState;
 
         private readonly ObservableCollection<TabDoc> _tabs = new();
+        private readonly Dictionary<string, Task<TabDoc?>> _openingTabs =
+            new(StringComparer.OrdinalIgnoreCase);
+        private static readonly List<string> PendingExternalOpens = new();
+        private bool _webCrashHandling;
         private TabDoc? CurrentTab => Tabs.SelectedItem as TabDoc;
 
         // ---- 多窗口（独立窗口 / 拖回合并） ----
@@ -154,6 +160,7 @@ namespace MarkdownViewer
             AllWindows.Remove(this);
             _dragTimer?.Stop();
             _autoSaveTimer?.Stop();
+            _draftTimer?.Stop();
             _watcher?.Dispose();
             _watcher = null;
         }
@@ -216,6 +223,7 @@ namespace MarkdownViewer
             SyncViewButtons();
             ApplyTocSettings();
             TypewriterToggle.IsChecked = _settings.Typewriter;
+            AutoSaveToggle.IsChecked = _settings.AutoSave;
             ApplyWindowPlacement();
             RebuildRecentMenu();
 
@@ -261,6 +269,7 @@ namespace MarkdownViewer
             WebView.CoreWebView2.NavigationCompleted += (s, ev) =>
             {
                 _webReady = true;
+                _webCrashHandling = false;
                 ApplyWebTheme();
                 ApplyWebView();
                 ApplySettingsToWeb();
@@ -273,6 +282,9 @@ namespace MarkdownViewer
                 Logger.Error($"WebView2 进程异常：{ev.ProcessFailedKind}");
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
+                    // 防止崩溃→Reload→再崩溃的死循环
+                    if (_webCrashHandling) return;
+                    _webCrashHandling = true;
                     try
                     {
                         MessageBox.Show("预览内核异常退出，正在尝试恢复。", "MarkdownViewer",
@@ -297,7 +309,16 @@ namespace MarkdownViewer
             else if (!_isFloating)
             {
                 // 有命令行文件时优先打开文件，否则恢复上次会话
-                if (!await OpenCommandLineFiles()) RestoreSession();
+                if (!await OpenCommandLineFiles()) await RestoreSessionAsync();
+
+                // 启动期间由资源管理器/其它实例转交过来的文件，窗口就绪后再统一打开
+                List<string> pending;
+                lock (PendingExternalOpens)
+                {
+                    pending = new List<string>(PendingExternalOpens);
+                    PendingExternalOpens.Clear();
+                }
+                if (pending.Count > 0) await OpenFromShellAsync(pending);
             }
 
             StartAutoSave();
@@ -446,7 +467,7 @@ namespace MarkdownViewer
             var text = tab.EditText ?? tab.MarkdownText;
             var preview = tab.ScrollY;
             var editor = tab.RestoreEditorScroll ?? 0;
-            var line = tab.RestoreLine;
+            var line = tab.RestoreLine < 0 ? 0 : tab.RestoreLine;
             var ch = tab.RestoreCh;
             var dirty = tab.IsDirty;
 
@@ -510,7 +531,7 @@ namespace MarkdownViewer
             }
         }
 
-        private bool RestoreSession()
+        private async Task<bool> RestoreSessionAsync()
         {
             var list = _settings.Session;
             if (list == null || list.Count == 0) return false;
@@ -520,12 +541,14 @@ namespace MarkdownViewer
             {
                 try
                 {
+                    var path = s.Path;
                     TabDoc tab;
-                    if (!string.IsNullOrEmpty(s.Path))
+                    if (!string.IsNullOrEmpty(path))
                     {
-                        if (!File.Exists(s.Path)) continue;
-                        var read = FileReaderHelper.ReadMarkdownFileEx(s.Path);
-                        tab = CreateTabDoc(s.Path, read.Text, read.Encoding);
+                        if (!File.Exists(path)) continue;
+                        // 后台读取，避免会话多标签时阻塞窗口显示
+                        var read = await Task.Run(() => FileReaderHelper.ReadMarkdownFileEx(path));
+                        tab = CreateTabDoc(path, read.Text, read.Encoding, read.Guessed);
                         if (s.Dirty)
                         {
                             tab.EditText = s.Text ?? read.Text;
@@ -574,6 +597,34 @@ namespace MarkdownViewer
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(Math.Max(5, _settings.AutoSaveSeconds));
             if (_settings.AutoSave) _autoSaveTimer.Start();
             else _autoSaveTimer.Stop();
+
+            // 未命名草稿与自动保存开关无关：始终定时写入会话文件，防止异常退出丢失
+            if (_draftTimer == null)
+            {
+                _draftTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+                _draftTimer.Tick += async (_, _) => await PersistDraftsTickAsync();
+            }
+            _draftTimer.Start();
+        }
+
+        private async Task PersistDraftsTickAsync()
+        {
+            if (_draftSaving) return;
+            if (!_tabs.Any(t => string.IsNullOrEmpty(t.FilePath))) return;
+            _draftSaving = true;
+            try
+            {
+                await SaveSessionAsync();
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("定时保存草稿失败：" + ex.Message);
+            }
+            finally
+            {
+                _draftSaving = false;
+            }
         }
 
         /// <summary>自动保存所有有路径且已修改的标签（静默，无对话框）。</summary>
@@ -582,6 +633,15 @@ namespace MarkdownViewer
             foreach (var tab in _tabs.ToList())
             {
                 if (string.IsNullOrEmpty(tab.FilePath) || !_tabs.Contains(tab)) continue;
+                // 只处理已标记为脏的标签，避免每次自动保存都同步所有文档
+                if (!tab.IsDirty) continue;
+                // 编码是推测出来的文件，自动写回可能损坏原文件：交给用户手动确认
+                if (tab.EncodingGuessed)
+                {
+                    if (ReferenceEquals(tab, CurrentTab))
+                        StatusText.Text = "自动保存已跳过：文件编码为推测结果，请手动保存确认";
+                    continue;
+                }
                 await SyncTabFromEditorAsync(tab);
                 if (!tab.IsDirty) continue;
                 try
@@ -594,7 +654,7 @@ namespace MarkdownViewer
                     tab.EditText = null;
                     tab.IsDirty = false;
                     WebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(
-                        new { type = "saved", tabId = tab.Id.ToString() }));
+                        new { type = "saved", tabId = tab.Id.ToString(), text }));
                     if (ReferenceEquals(tab, CurrentTab))
                     {
                         RefreshWindowTitle();
@@ -604,6 +664,8 @@ namespace MarkdownViewer
                 catch (Exception ex)
                 {
                     Logger.Error("自动保存失败：" + tab.FilePath, ex);
+                    if (ReferenceEquals(tab, CurrentTab))
+                        StatusText.Text = "自动保存失败：" + ex.Message;
                 }
                 finally
                 {
@@ -693,7 +755,18 @@ namespace MarkdownViewer
                 var write = SafeLastWrite(tab.FilePath);
                 if (write <= _lastKnownWriteUtc) return;
                 _lastKnownWriteUtc = write;
-                if (tab.IsDirty) return; // 有本地未保存修改时不自动覆盖，交由用户决定
+                if (tab.IsDirty)
+                {
+                    // 本地有未保存修改：不能静默丢弃，也不能静默忽略
+                    var choose = MessageBox.Show(
+                        "文件已被其它程序修改，而当前编辑器中还有未保存的修改。\n\n" +
+                        "是：重新加载磁盘内容（丢弃本地修改）\n" +
+                        "否：保留本地修改（下次保存会覆盖外部修改）",
+                        "文件已变更", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    if (choose == MessageBoxResult.Yes) ReloadCurrentTabSilently();
+                    else StatusText.Text = "文件已被外部修改：已保留本地未保存内容";
+                    return;
+                }
 
                 var r = MessageBox.Show(
                     "文件已被其它程序修改，是否重新加载？\n\n" + tab.FilePath,
@@ -761,7 +834,7 @@ namespace MarkdownViewer
         }
 
         /// <summary>按色板创建带颜色的标签文档。</summary>
-        private static TabDoc CreateTabDoc(string filePath, string text, MdEncoding encoding)
+        private static TabDoc CreateTabDoc(string filePath, string text, MdEncoding encoding, bool encodingGuessed = false)
         {
             var ci = System.Threading.Interlocked.Increment(ref _colorCounter) - 1;
             var idx = ((ci % Palette.Length) + Palette.Length) % Palette.Length;
@@ -773,6 +846,7 @@ namespace MarkdownViewer
                 FilePath = filePath,
                 MarkdownText = text,
                 Encoding = encoding,
+                EncodingGuessed = encodingGuessed,
                 ColorIndex = idx,
                 TabBrush = Frozen(main),
                 TabBrushLight = Frozen(light),
@@ -790,12 +864,40 @@ namespace MarkdownViewer
         /// <summary>打开一个 Markdown 文件为标签页（不等待读取完成）。</summary>
         public void OpenTab(string filePath) => _ = OpenTabAsync(filePath);
 
-        /// <summary>打开一个 Markdown 文件为标签页；已打开则切换到现有标签。</summary>
-        public async Task<TabDoc?> OpenTabAsync(string filePath)
+        /// <summary>打开一个 Markdown 文件；同一路径的并发打开会复用同一个任务。</summary>
+        public Task<TabDoc?> OpenTabAsync(string filePath)
+        {
+            string full;
+            try
+            {
+                full = Path.GetFullPath(filePath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("打开文件失败：" + filePath, ex);
+                MessageBox.Show($"打开文件失败：{ex.Message}", "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return Task.FromResult<TabDoc?>(null);
+            }
+
+            lock (_openingTabs)
+            {
+                if (_openingTabs.TryGetValue(full, out var running)) return running;
+            }
+
+            var task = OpenTabCoreAsync(full);
+            lock (_openingTabs) _openingTabs[full] = task;
+            _ = task.ContinueWith(_ =>
+            {
+                lock (_openingTabs) _openingTabs.Remove(full);
+            }, TaskScheduler.Default);
+            return task;
+        }
+
+        private async Task<TabDoc?> OpenTabCoreAsync(string full)
         {
             try
             {
-                var full = Path.GetFullPath(filePath);
                 var existing = _tabs.FirstOrDefault(t =>
                     string.Equals(t.FilePath, full, StringComparison.OrdinalIgnoreCase));
                 if (existing != null)
@@ -806,7 +908,17 @@ namespace MarkdownViewer
 
                 // 后台读取，大文件不会卡住 UI
                 var read = await Task.Run(() => FileReaderHelper.ReadMarkdownFileEx(full));
-                var tab = CreateTabDoc(full, read.Text, read.Encoding);
+
+                // 读取期间可能已由其它路径把同一文件加进来
+                var raced = _tabs.FirstOrDefault(t =>
+                    string.Equals(t.FilePath, full, StringComparison.OrdinalIgnoreCase));
+                if (raced != null)
+                {
+                    Tabs.SelectedItem = raced;
+                    return raced;
+                }
+
+                var tab = CreateTabDoc(full, read.Text, read.Encoding, read.Guessed);
                 _tabs.Add(tab);
                 Tabs.SelectedItem = tab;
                 _settings.AddRecent(full);
@@ -819,7 +931,7 @@ namespace MarkdownViewer
             }
             catch (Exception ex)
             {
-                Logger.Error("打开文件失败：" + filePath, ex);
+                Logger.Error("打开文件失败：" + full, ex);
                 MessageBox.Show($"打开文件失败：{ex.Message}", "错误",
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 return null;
@@ -1017,8 +1129,28 @@ namespace MarkdownViewer
                 if (root.TryGetProperty("dirty", out var de) &&
                     (de.ValueKind == JsonValueKind.True || de.ValueKind == JsonValueKind.False))
                     tab.IsDirty = de.GetBoolean();
+                // 干净标签无需保留编辑副本，避免下次切换带回旧文本
+                if (!tab.IsDirty) tab.EditText = null;
             }
-            catch { /* 前端尚未就绪时忽略 */ }
+            catch (Exception ex)
+            {
+                // 前端尚未就绪时可能拿不到 JSON：记录一条即可，不打断保存流程
+                Logger.Warn("同步编辑器内容失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>编码是推测出来的文件，写回前请用户确认。</summary>
+        private static bool ConfirmGuessedEncoding(TabDoc tab)
+        {
+            if (!tab.EncodingGuessed) return true;
+            var r = MessageBox.Show(
+                $"「{tab.DisplayName}」的编码是自动推测的（{FileReaderHelper.Name(tab.Encoding)}）。\n\n" +
+                "直接保存可能改变原文件编码，导致其它程序打开乱码。\n" +
+                "是：按推测编码保存；否：取消，先用「编码」菜单确认正确编码。",
+                "保存编码确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (r != MessageBoxResult.Yes) return false;
+            tab.EncodingGuessed = false;
+            return true;
         }
 
         /// <summary>保存标签到磁盘（按原编码写回）。未命名文档会先弹出另存为。返回是否成功。</summary>
@@ -1026,6 +1158,8 @@ namespace MarkdownViewer
         {
             if (string.IsNullOrEmpty(tab.FilePath))
                 return await SaveTabAsAsync(tab);
+
+            if (!ConfirmGuessedEncoding(tab)) return false;
 
             await SyncTabFromEditorAsync(tab);
             try
@@ -1035,11 +1169,12 @@ namespace MarkdownViewer
                 tab.MarkdownText = text;
                 tab.EditText = null;
                 tab.IsDirty = false;
+                tab.EncodingGuessed = false;
                 _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
                 _settings.AddRecent(tab.FilePath);
                 RebuildRecentMenu();
-                WebView.CoreWebView2?.PostWebMessageAsJson(
-                    JsonSerializer.Serialize(new { type = "saved", tabId = tab.Id.ToString() }));
+                WebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(
+                    new { type = "saved", tabId = tab.Id.ToString(), text }));
                 StatusText.Text = $"已保存：{tab.FilePath} · {FileReaderHelper.Name(tab.Encoding)}";
                 if (ReferenceEquals(tab, CurrentTab)) RefreshWindowTitle();
                 return true;
@@ -1062,6 +1197,8 @@ namespace MarkdownViewer
             };
             if (dlg.ShowDialog() != true) return false;
 
+            if (!ConfirmGuessedEncoding(tab)) return false;
+
             await SyncTabFromEditorAsync(tab);
             try
             {
@@ -1072,6 +1209,7 @@ namespace MarkdownViewer
                 tab.MarkdownText = text;
                 tab.EditText = null;
                 tab.IsDirty = false;
+                tab.EncodingGuessed = false;
                 tab.RefreshTitle();
                 _lastKnownWriteUtc = SafeLastWrite(newPath);
                 _settings.AddRecent(newPath);
@@ -1085,9 +1223,13 @@ namespace MarkdownViewer
                         "mdfile.local", newDir, CoreWebView2HostResourceAccessKind.Allow);
                 }
 
+                // 路径变了：重新监听新文件，并让前端强制重建预览以重新请求相对图片
+                UpdateWatcher(tab);
                 RefreshWindowTitle();
+                WebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(
+                    new { type = "saved", tabId = tab.Id.ToString(), text }));
                 WebView.CoreWebView2?.PostWebMessageAsJson(
-                    JsonSerializer.Serialize(new { type = "saved", tabId = tab.Id.ToString() }));
+                    JsonSerializer.Serialize(new { type = "reloadImages" }));
                 StatusText.Text = "已另存为：" + newPath;
                 return true;
             }
@@ -1361,7 +1503,6 @@ namespace MarkdownViewer
                 type = "load",
                 tabId = tab.Id.ToString(),
                 text = tab.EditText ?? tab.MarkdownText,
-                editText = tab.EditText,
                 title = tab.Title,
                 dirty = tab.IsDirty,
                 reset = reset,
@@ -1371,6 +1512,10 @@ namespace MarkdownViewer
                 editorScroll = tab.RestoreEditorScroll
             });
             WebView.CoreWebView2.PostWebMessageAsJson(payload);
+            // 首次加载已经把会话光标/滚动交给前端；之后切标签改用前端自己的位置
+            tab.RestoreLine = -1;
+            tab.RestoreCh = 0;
+            tab.RestoreEditorScroll = null;
         }
 
         /// <summary>接收前端 JS 消息：目录数据 / 当前滚动位置对应的标题。</summary>
@@ -1380,9 +1525,10 @@ namespace MarkdownViewer
             {
                 ReceiveWebMessage(e.WebMessageAsJson);
             }
-            catch
+            catch (Exception ex)
             {
-                // 非法/不完整的消息直接忽略，避免前端异常拖垮宿主
+                // 非法/不完整的消息忽略，但要留下日志方便定位前端问题
+                Logger.Warn("处理前端消息失败：" + ex.Message);
             }
         }
 
@@ -1415,6 +1561,8 @@ namespace MarkdownViewer
                     if (dtab != null && root.TryGetProperty("dirty", out var dv))
                     {
                         dtab.IsDirty = dv.GetBoolean();
+                        // 撤销回保存基线后，不再保留过期的编辑缓存
+                        if (!dtab.IsDirty) dtab.EditText = null;
                         if (ReferenceEquals(dtab, CurrentTab)) RefreshWindowTitle();
                     }
                     break;
@@ -1461,6 +1609,32 @@ namespace MarkdownViewer
                 case "saveImage":
                     HandleSaveImage(root);
                     break;
+                case "draft":
+                    // 编辑草稿：只缓存文本，不改变脏状态（脏状态以 dirty 消息为准）
+                    var drid = root.TryGetProperty("tabId", out var drt) ? drt.GetString() : null;
+                    var drab = _tabs.FirstOrDefault(x => x.Id.ToString() == drid);
+                    if (drab != null && root.TryGetProperty("text", out var drx) &&
+                        drx.ValueKind == JsonValueKind.String)
+                    {
+                        drab.EditText = drx.GetString();
+                    }
+                    break;
+                case "status":
+                    if (root.TryGetProperty("text", out var stx) && stx.ValueKind == JsonValueKind.String)
+                        StatusText.Text = stx.GetString() ?? "";
+                    break;
+                case "openFile":
+                    OpenFile_Click(this, new RoutedEventArgs());
+                    break;
+                case "saveAs":
+                    SaveAs_Click(this, new RoutedEventArgs());
+                    break;
+                case "reload":
+                    Reload_Click(this, new RoutedEventArgs());
+                    break;
+                case "searchFolder":
+                    SearchInFolder_Click(this, new RoutedEventArgs());
+                    break;
             }
         }
 
@@ -1478,19 +1652,26 @@ namespace MarkdownViewer
             if (!root.TryGetProperty("dataUrl", out var du) || du.ValueKind != JsonValueKind.String) return;
 
             var dataUrl = du.GetString() ?? "";
+            if (!dataUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase)) return;
             var comma = dataUrl.IndexOf(',');
             if (comma < 0) return;
             var header = dataUrl.Substring(0, comma);
             var base64 = dataUrl.Substring(comma + 1);
+            if (base64.Length > 20_000_000)
+            {
+                StatusText.Text = "图片过大（超过约 15MB），已取消插入";
+                return;
+            }
             var ext = header.Contains("image/jpeg", StringComparison.OrdinalIgnoreCase) ? ".jpg"
                 : header.Contains("image/gif", StringComparison.OrdinalIgnoreCase) ? ".gif"
                 : header.Contains("image/webp", StringComparison.OrdinalIgnoreCase) ? ".webp"
+                : header.Contains("image/svg", StringComparison.OrdinalIgnoreCase) ? ".svg"
                 : ".png";
             try
             {
                 var bytes = Convert.FromBase64String(base64);
                 var rel = CopyImageToAssets(tab, "image" + ext, bytes);
-                PostToWeb(new { type = "insert", text = $"![]({rel})" });
+                PostToWeb(new { type = "insert", tabId = tab.Id.ToString(), text = $"![]({rel})" });
                 StatusText.Text = "图片已保存到 " + rel;
             }
             catch (Exception ex)
@@ -1751,6 +1932,15 @@ namespace MarkdownViewer
             ApplySettingsToWeb();
         }
 
+        private void AutoSaveToggle_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.AutoSave = AutoSaveToggle.IsChecked == true;
+            StartAutoSave();
+            StatusText.Text = _settings.AutoSave
+                ? $"已开启自动保存（每 {Math.Max(5, _settings.AutoSaveSeconds)} 秒）"
+                : "已关闭自动保存";
+        }
+
         // ======================= Office 风格功能区 =======================
 
         private void RibbonTab_Checked(object sender, RoutedEventArgs e)
@@ -1807,12 +1997,23 @@ namespace MarkdownViewer
         private void EncodingMenu_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not FrameworkElement fe || fe.Tag is not string name) return;
-            if (Enum.TryParse<MdEncoding>(name, out var enc)) ApplyEncoding(enc);
+            if (Enum.TryParse<MdEncoding>(name, out var enc)) SetSaveEncoding(enc);
         }
 
         private void ReloadWithEncoding_Click(object sender, RoutedEventArgs e)
         {
+            // 「以当前编码重新读取」：按标签当前编码重新解码磁盘文件
             if (CurrentTab != null) ApplyEncoding(CurrentTab.Encoding);
+        }
+
+        /// <summary>只设置“保存时使用的编码”，不立即重读文件（避免误丢编辑内容）。</summary>
+        private void SetSaveEncoding(MdEncoding enc)
+        {
+            var tab = CurrentTab;
+            if (tab == null) return;
+            tab.Encoding = enc;
+            tab.EncodingGuessed = false;
+            StatusText.Text = $"保存编码已设为 {FileReaderHelper.Name(enc)}；如需重新解码请用「以当前编码重新读取」";
         }
 
         /// <summary>按指定编码重新解码当前文件（用于修正乱码或切换写回编码）。</summary>
@@ -1841,6 +2042,7 @@ namespace MarkdownViewer
                 var bytes = File.ReadAllBytes(tab.FilePath);
                 tab.MarkdownText = FileReaderHelper.DecodeWith(enc, bytes);
                 tab.Encoding = enc;
+                tab.EncodingGuessed = false;
                 tab.EditText = null;
                 tab.IsDirty = false;
                 _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
@@ -1866,6 +2068,10 @@ namespace MarkdownViewer
                 FileName = Path.GetFileNameWithoutExtension(tab.BaseTitle) + ".html"
             };
             if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(tab.FilePath) &&
+                MessageBox.Show("当前文档尚未保存，导出后相对路径图片可能无法显示。是否继续？",
+                    "导出 HTML", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
             try
             {
                 var title = JsonSerializer.Serialize(tab.BaseTitle);
@@ -1873,6 +2079,19 @@ namespace MarkdownViewer
                     $"window.buildExportHtml({title})");
                 var html = JsonSerializer.Deserialize<string>(raw);
                 if (string.IsNullOrEmpty(html)) throw new InvalidOperationException("导出内容为空");
+
+                // 预览中的图片使用 https://mdfile.local/ 虚拟主机，导出文件必须换成绝对 file:/// 路径
+                if (!string.IsNullOrEmpty(tab.FilePath))
+                {
+                    var dir = Path.GetDirectoryName(tab.FilePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        var baseUri = new Uri(dir + Path.DirectorySeparatorChar).AbsoluteUri;
+                        html = html.Replace("https://mdfile.local/", baseUri,
+                            StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+
                 File.WriteAllText(dlg.FileName, html, new System.Text.UTF8Encoding(false));
                 StatusText.Text = "已导出 HTML：" + dlg.FileName;
             }
@@ -1936,9 +2155,10 @@ namespace MarkdownViewer
             if (dlg.ShowDialog() != true) return;
             try
             {
-                var name = Path.GetFileNameWithoutExtension(dlg.FileName);
+                var name = Path.GetFileNameWithoutExtension(dlg.FileName)
+                    .Replace('[', '(').Replace(']', ')');
                 var rel = CopyImageToAssets(tab, dlg.FileName);
-                PostToWeb(new { type = "insert", text = $"![{name}]({rel})" });
+                PostToWeb(new { type = "insert", tabId = tab.Id.ToString(), text = $"![{name}]({rel})" });
                 StatusText.Text = "图片已复制到 " + rel;
             }
             catch (Exception ex)
@@ -1961,32 +2181,34 @@ namespace MarkdownViewer
             if (string.IsNullOrEmpty(ext)) ext = ".png";
             var baseName = Path.GetFileNameWithoutExtension(sourcePath);
             if (string.IsNullOrWhiteSpace(baseName)) baseName = "image";
-            var name = $"{baseName}-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}";
+            // 文件名中的空格/括号/井号会破坏 Markdown 链接语法，统一替换为 -
+            var safeStem = new string(baseName.Select(c =>
+                char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-').ToArray());
+            if (string.IsNullOrWhiteSpace(safeStem)) safeStem = "image";
+            var name = $"{safeStem}-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}";
             var dest = Path.Combine(assets, name);
 
             if (bytes != null) File.WriteAllBytes(dest, bytes);
             else File.Copy(sourcePath, dest, true);
 
-            return "assets/" + name.Replace(' ', '-');
+            return "assets/" + name;
         }
 
-        private void InsertTable_Click(object sender, RoutedEventArgs e) => PostToWeb(new
+        /// <summary>在当前标签的光标处插入 Markdown 片段。</summary>
+        private void InsertMarkdown(string text)
         {
-            type = "insert",
-            text = "| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n"
-        });
+            var tab = CurrentTab;
+            PostToWeb(new { type = "insert", tabId = tab?.Id.ToString(), text });
+        }
 
-        private void InsertCodeBlock_Click(object sender, RoutedEventArgs e) => PostToWeb(new
-        {
-            type = "insert",
-            text = "```text\n\n```\n"
-        });
+        private void InsertTable_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n");
 
-        private void InsertTaskList_Click(object sender, RoutedEventArgs e) => PostToWeb(new
-        {
-            type = "insert",
-            text = "- [ ] 待办事项\n- [x] 已完成事项\n"
-        });
+        private void InsertCodeBlock_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("```text\n\n```\n");
+
+        private void InsertTaskList_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("- [ ] 待办事项\n- [x] 已完成事项\n");
 
         private void SearchInFolder_Click(object sender, RoutedEventArgs e)
         {
@@ -2112,12 +2334,13 @@ namespace MarkdownViewer
         }
 
         /// <summary>外部进程（第二个实例）请求打开文件。</summary>
-        public async void OpenFromShell(IEnumerable<string> files)
+        public void OpenFromShell(IEnumerable<string> files) => _ = OpenFromShellAsync(files);
+
+        private async Task OpenFromShellAsync(IEnumerable<string> files)
         {
-            foreach (var f in files)
-            {
-                if (File.Exists(f) && IsTextDocument(f)) await OpenTabAsync(f);
-            }
+            var list = files.Where(f => File.Exists(f) && IsTextDocument(f)).ToList();
+            foreach (var f in list) await OpenTabAsync(f);
+            if (list.Count == 0) return;
             if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
             Activate();
         }
@@ -2125,9 +2348,17 @@ namespace MarkdownViewer
         /// <summary>由另一个实例转发参数时调用（静态入口）。</summary>
         public static void RouteExternalOpen(IEnumerable<string> files)
         {
+            var list = files.Where(f => File.Exists(f) && IsTextDocument(f)).ToList();
+            if (list.Count == 0) return;
             var win = AllWindows.FirstOrDefault(w => !w._isFloating && w.IsLoaded)
                       ?? AllWindows.FirstOrDefault(w => w.IsLoaded);
-            win?.OpenFromShell(files);
+            if (win != null)
+            {
+                win.OpenFromShell(list);
+                return;
+            }
+            // 主窗口尚未 Loaded：先排队，窗口就绪后再打开，避免文件被丢弃
+            lock (PendingExternalOpens) PendingExternalOpens.AddRange(list);
         }
 
         private void OpenFile_Click(object sender, RoutedEventArgs e)
@@ -2177,6 +2408,26 @@ namespace MarkdownViewer
             catch { /* 系统无法打开时静默忽略 */ }
         }
 
+        /// <summary>可以直接交给系统打开的文档/图片类型（不需要二次确认）。</summary>
+        private static readonly HashSet<string> SafeOpenExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".md", ".markdown", ".mdx", ".txt", ".text", ".pdf",
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
+            ".html", ".htm", ".json", ".xml", ".csv", ".log", ".yaml", ".yml"
+        };
+
+        /// <summary>非文档/可执行文件交给系统打开前，让用户确认。</summary>
+        private static bool ConfirmOpenNonDocument(string path)
+        {
+            var ext = Path.GetExtension(path);
+            var r = MessageBox.Show(
+                $"该链接指向非文档文件：\n{path}\n\n" +
+                $"扩展名：{(string.IsNullOrEmpty(ext) ? "（无）" : ext)}\n\n" +
+                "可执行文件/脚本可能带来安全风险，是否继续用系统默认程序打开？",
+                "确认打开文件", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            return r == MessageBoxResult.Yes;
+        }
+
         /// <summary>
         /// 处理 WebView 尝试导航的目标：
         /// markdown 文件（例如直接拖放 .md 到预览区）在应用内打开，其它交给系统。
@@ -2194,6 +2445,7 @@ namespace MarkdownViewer
                         OpenTab(fu.LocalPath);
                         return;
                     }
+                    if (!SafeOpenExtensions.Contains(ext) && !ConfirmOpenNonDocument(fu.LocalPath)) return;
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fu.LocalPath)
                     {
                         UseShellExecute = true
@@ -2233,6 +2485,7 @@ namespace MarkdownViewer
                 }
                 else
                 {
+                    if (!SafeOpenExtensions.Contains(ext) && !ConfirmOpenNonDocument(full)) return;
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(full)
                     {
                         UseShellExecute = true
@@ -2270,6 +2523,7 @@ namespace MarkdownViewer
                 var read = FileReaderHelper.ReadMarkdownFileEx(tab.FilePath);
                 tab.MarkdownText = read.Text;
                 tab.Encoding = read.Encoding;
+                tab.EncodingGuessed = read.Guessed;
                 tab.EditText = null;
                 tab.IsDirty = false;
                 if (_webReady) PushMarkdown(tab, reset: true);
@@ -2359,6 +2613,9 @@ namespace MarkdownViewer
         /// <summary>文件原始编码，保存时按此编码写回。</summary>
         public MdEncoding Encoding { get; set; } = MdEncoding.Utf8NoBom;
 
+        /// <summary>编码是否为自动推测（保存前需要用户确认，自动保存会跳过）。</summary>
+        public bool EncodingGuessed { get; set; }
+
         private bool _isDirty;
         /// <summary>是否有未保存的修改（标题前显示 ●）。</summary>
         public bool IsDirty
@@ -2392,7 +2649,7 @@ namespace MarkdownViewer
         public double ScrollY { get; set; }
 
         /// <summary>会话恢复用：光标行/列与编辑器滚动位置。</summary>
-        public int RestoreLine { get; set; }
+        public int RestoreLine { get; set; } = -1;
         public int RestoreCh { get; set; }
         public double? RestoreEditorScroll { get; set; }
 

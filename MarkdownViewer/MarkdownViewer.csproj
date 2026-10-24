@@ -9,13 +9,14 @@
     <AssemblyName>MarkdownViewer</AssemblyName>
     <RootNamespace>MarkdownViewer</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.1.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.1.1</Version>
     <Product>MarkdownViewer</Product>
     <Authors>tobegmup</Authors>
     <Company>tobegmup</Company>
     <Copyright>Copyright © 2026 tobegmup</Copyright>
-    <FileVersion>1.1.0.0</FileVersion>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.1.0</FileVersion>
+    <AssemblyVersion>1.1.1.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

@@ -31,7 +31,9 @@ namespace MarkdownViewer
         private readonly ListBox _results = new();
         private readonly TextBlock _status = new();
         private readonly Button _searchButton = new() { Content = "搜索", Padding = new Thickness(14, 2, 14, 2) };
+        private readonly Button _cancelButton = new() { Content = "停止", Padding = new Thickness(14, 2, 14, 2), IsEnabled = false };
         private readonly TextBlock _rootLabel = new();
+        private const int MaxHits = 400;
         private readonly string _root;
         private int _searchVersion;
 
@@ -56,6 +58,7 @@ namespace MarkdownViewer
             top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             _query.Width = double.NaN;
             _query.Padding = new Thickness(6, 3, 6, 3);
@@ -63,6 +66,8 @@ namespace MarkdownViewer
             Grid.SetColumn(_query, 1);
             Grid.SetColumn(_searchButton, 2);
             _searchButton.Margin = new Thickness(8, 0, 0, 0);
+            Grid.SetColumn(_cancelButton, 3);
+            _cancelButton.Margin = new Thickness(6, 0, 0, 0);
 
             var label = new TextBlock
             {
@@ -75,6 +80,7 @@ namespace MarkdownViewer
             top.Children.Add(label);
             top.Children.Add(_query);
             top.Children.Add(_searchButton);
+            top.Children.Add(_cancelButton);
             DockPanel.SetDock(top, Dock.Top);
             panel.Children.Add(top);
 
@@ -98,7 +104,10 @@ namespace MarkdownViewer
 
             Content = panel;
 
+            ApplyThemeFromOwner();
+
             _searchButton.Click += (_, _) => StartSearch();
+            _cancelButton.Click += (_, _) => StopSearch();
             _query.KeyDown += (_, e) =>
             {
                 if (e.Key == Key.Enter) StartSearch();
@@ -111,6 +120,48 @@ namespace MarkdownViewer
             };
 
             Loaded += (_, _) => _query.Focus();
+        }
+
+        /// <summary>跟随主窗口当前主题，暗色下不再出现浅底输入框/列表。</summary>
+        private void ApplyThemeFromOwner()
+        {
+            if (_owner.TryFindResource("MainBgBrush") is Brush main) Background = main;
+
+            var panelBg = _owner.TryFindResource("TocPanelBgBrush") as Brush;
+            var fg = _owner.TryFindResource("TocTextBrush") as Brush;
+            var muted = _owner.TryFindResource("StatusTextBrush") as Brush ?? fg;
+            var border = _owner.TryFindResource("BorderBrush2") as Brush;
+
+            if (fg != null) Foreground = fg;
+            if (panelBg != null)
+            {
+                _query.Background = panelBg;
+                _query.Foreground = fg;
+                _query.CaretBrush = fg;
+                _results.Background = panelBg;
+                _searchButton.Background = panelBg;
+                _cancelButton.Background = panelBg;
+            }
+            if (fg != null)
+            {
+                _results.Foreground = fg;
+                _searchButton.Foreground = fg;
+                _cancelButton.Foreground = fg;
+            }
+            if (muted != null)
+            {
+                _rootLabel.Foreground = muted;
+                _status.Foreground = muted;
+            }
+            if (border != null) _results.BorderBrush = border;
+        }
+
+        private void StopSearch()
+        {
+            _searchVersion++;
+            _status.Text = "搜索已停止。";
+            _searchButton.IsEnabled = true;
+            _cancelButton.IsEnabled = false;
         }
 
         private void OpenSelected()
@@ -127,20 +178,28 @@ namespace MarkdownViewer
             var version = ++_searchVersion;
             _results.Items.Clear();
             _status.Text = "正在搜索…";
+            _searchButton.IsEnabled = false;
+            _cancelButton.IsEnabled = true;
 
             List<SearchHit> hits;
+            bool truncated;
             try
             {
-                hits = await Task.Run(() => Search(term, version));
+                (hits, truncated) = await Task.Run(() => Search(term, version));
             }
             catch (Exception ex)
             {
                 Logger.Error("文件夹搜索失败", ex);
-                _status.Text = "搜索失败：" + ex.Message;
+                if (version == _searchVersion)
+                {
+                    _status.Text = "搜索失败：" + ex.Message;
+                    _searchButton.IsEnabled = true;
+                    _cancelButton.IsEnabled = false;
+                }
                 return;
             }
 
-            if (version != _searchVersion) return; // 已有更新的搜索
+            if (version != _searchVersion) return; // 已有更新的搜索/已停止
 
             foreach (var hit in hits)
             {
@@ -148,17 +207,26 @@ namespace MarkdownViewer
             }
             _status.Text = hits.Count == 0
                 ? "未找到匹配内容。"
-                : $"找到 {hits.Count} 处匹配，双击结果可跳转到对应行。";
+                : truncated
+                    ? $"匹配结果超过 {MaxHits} 条，已截断显示（请使用更精确的关键字）。"
+                    : $"找到 {hits.Count} 处匹配，双击结果可跳转到对应行。";
+            _searchButton.IsEnabled = true;
+            _cancelButton.IsEnabled = false;
         }
 
-        private List<SearchHit> Search(string term, int version)
+        private (List<SearchHit> Hits, bool Truncated) Search(string term, int version)
         {
             var hits = new List<SearchHit>();
-            const int maxHits = 400;
+            var truncated = false;
 
             foreach (var file in EnumerateFiles(_root))
             {
-                if (version != _searchVersion || hits.Count >= maxHits) break;
+                if (version != _searchVersion) return (hits, false);
+                if (hits.Count >= MaxHits)
+                {
+                    truncated = true;
+                    break;
+                }
                 try
                 {
                     var info = new FileInfo(file);
@@ -170,12 +238,17 @@ namespace MarkdownViewer
                     var lines = text.Split('\n');
                     for (var i = 0; i < lines.Length; i++)
                     {
+                        if ((i & 2047) == 0 && version != _searchVersion) return (hits, false);
                         var idx = lines[i].IndexOf(term, StringComparison.OrdinalIgnoreCase);
                         if (idx < 0) continue;
                         var preview = lines[i].Trim();
                         if (preview.Length > 120) preview = preview.Substring(0, 120) + "…";
                         hits.Add(new SearchHit(file, i + 1, preview));
-                        if (hits.Count >= maxHits) break;
+                        if (hits.Count >= MaxHits)
+                        {
+                            truncated = true;
+                            break;
+                        }
                     }
                 }
                 catch
@@ -183,7 +256,7 @@ namespace MarkdownViewer
                     // 单个文件读取失败（编码/权限）直接跳过
                 }
             }
-            return hits;
+            return (hits, truncated);
         }
 
         private IEnumerable<string> EnumerateFiles(string dir)
@@ -213,6 +286,16 @@ namespace MarkdownViewer
                 foreach (var sub in subDirs)
                 {
                     if (SkipDirs.Contains(Path.GetFileName(sub))) continue;
+                    // 跳过符号链接/联接点，避免递归绕圈或跨盘扫描
+                    try
+                    {
+                        var di = new DirectoryInfo(sub);
+                        if ((di.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
                     stack.Push(sub);
                 }
             }

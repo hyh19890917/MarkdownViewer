@@ -8,7 +8,7 @@ namespace MarkdownViewerInstaller;
 internal static class Program
 {
     public const string AppName = "MarkdownViewer";
-    public const string AppVersion = "1.1.0";
+    public const string AppVersion = "1.1.1";
     public const string Publisher = "tobegmup";
     public static readonly string ExeName = $"{AppName}.exe";
     public const string UninstallExeName = "Uninstall.exe";
@@ -96,106 +96,166 @@ internal static class Program
         var exePath = Path.Combine(installDir, ExeName);
         var uninstallPath = Path.Combine(installDir, UninstallExeName);
 
-        log?.Invoke("正在关闭正在运行的 MarkdownViewer...");
-        // 覆盖安装时，如果旧版本装在别的目录，也一并处理
-        var oldDir = GetRegisteredInstallDir();
-        KillApp(installDir, oldDir);
-
-        // 如果旧版本装在别的目录，先清理旧目录（仅删除本程序文件）
-        if (!string.IsNullOrEmpty(oldDir) &&
-            !string.Equals(Path.GetFullPath(oldDir), installDir, StringComparison.OrdinalIgnoreCase))
+        // 先把载荷完整解到临时目录并校验，确认可用后才删除旧版本文件，
+        // 避免“先删后解压失败”导致程序被卸载一半。
+        var staging = Path.Combine(Path.GetTempPath(),
+            "MarkdownViewerSetup_" + Guid.NewGuid().ToString("N"));
+        var succeeded = false;
+        try
         {
-            log?.Invoke("检测到旧版本，正在清理旧目录...");
-            DeleteInstalledFiles(oldDir);
-            TryDeleteIfEmpty(oldDir);
-        }
+            log?.Invoke("正在校验安装文件...");
+            Directory.CreateDirectory(staging);
+            var payloadZip = Path.Combine(AppContext.BaseDirectory, "payload.zip");
+            var payloadDir = Path.Combine(AppContext.BaseDirectory, "payload");
+            if (File.Exists(payloadZip))
+            {
+                using var stream = File.OpenRead(payloadZip);
+                using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+                zip.ExtractToDirectory(staging, true);
+            }
+            else if (Directory.Exists(payloadDir))
+            {
+                CopyDirectory(payloadDir, staging);
+            }
+            else
+            {
+                throw new FileNotFoundException(
+                    "未找到安装载荷 payload.zip。\n" +
+                    "请将 payload.zip 与安装程序放在同一目录后重试。\n\n" +
+                    "期望路径：" + payloadZip);
+            }
 
-        log?.Invoke("正在解压程序文件...");
-        if (Directory.Exists(installDir))
-        {
-            // 仅当目录看起来确实是本程序的安装目录时才整体清理；
-            // 避免用户把安装路径填成 D:\Tools 这类已有目录时误删其中的文件
+            if (!File.Exists(Path.Combine(staging, ExeName)))
+                throw new FileNotFoundException(
+                    "安装载荷不完整：其中未找到主程序 " + ExeName + "。\n" +
+                    "请重新下载完整的 payload.zip / 安装包。");
+
+            log?.Invoke("正在检查安装目录...");
+            // 写权限探测放在删除旧文件之前：目标不可写时直接失败，旧安装保持原样
+            Directory.CreateDirectory(installDir);
+            try
+            {
+                var probe = Path.Combine(installDir, ".write-test");
+                File.WriteAllText(probe, "1");
+                File.Delete(probe);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw new UnauthorizedAccessException(
+                    $"没有权限写入目录「{installDir}」。\n请更换目录（如用户目录），或以管理员身份运行安装包。", ex);
+            }
+
+            log?.Invoke("正在关闭正在运行的 MarkdownViewer...");
+            // 覆盖安装时，如果旧版本装在别的目录，也一并处理
+            var oldDir = GetRegisteredInstallDir();
+            KillApp(installDir, oldDir);
+            EnsureAppStopped(exePath);
+            if (!string.IsNullOrEmpty(oldDir))
+                EnsureAppStopped(Path.Combine(oldDir, ExeName));
+
+            // 旧版本装在别的目录：先迁移用户数据，再清理旧目录
+            if (!string.IsNullOrEmpty(oldDir) &&
+                !string.Equals(Path.GetFullPath(oldDir), installDir, StringComparison.OrdinalIgnoreCase))
+            {
+                log?.Invoke("检测到旧版本，正在清理旧目录...");
+                try
+                {
+                    var oldUserData = Path.Combine(oldDir, "userdata");
+                    var newUserData = Path.Combine(installDir, "userdata");
+                    if (Directory.Exists(oldUserData) && !Directory.Exists(newUserData))
+                        CopyDirectory(oldUserData, newUserData);
+                }
+                catch (Exception ex)
+                {
+                    log?.Invoke("迁移旧版本设置失败（可稍后手动复制 userdata）：" + ex.Message);
+                }
+                DeleteInstalledFiles(oldDir);
+                // 已迁移成功才清掉旧 userdata；迁移失败则保留，避免设置丢失
+                if (Directory.Exists(Path.Combine(installDir, "userdata")))
+                    TryDelete(Path.Combine(oldDir, "userdata"));
+                TryDeleteIfEmpty(oldDir);
+            }
+
+            // 仅当目录看起来确实是本程序的安装目录时才清理；保留 userdata
             var looksLikeOurs =
                 File.Exists(Path.Combine(installDir, ExeName)) ||
                 File.Exists(Path.Combine(installDir, UninstallExeName)) ||
                 File.Exists(Path.Combine(installDir, "version.txt"));
             if (looksLikeOurs) DeleteInstalledFiles(installDir);
-        }
-        try
-        {
-            Directory.CreateDirectory(installDir);
-            // 探测写权限（例如选了 Program Files 但未提权时给出明确提示）
-            var probe = Path.Combine(installDir, ".write-test");
-            File.WriteAllText(probe, "1");
-            File.Delete(probe);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            throw new UnauthorizedAccessException(
-                $"没有权限写入目录「{installDir}」。\n请更换目录（如用户目录），或以管理员身份运行安装包。", ex);
-        }
 
-        // payload.zip 位于安装器同目录（不再内嵌，避免安装包单文件超过 100MB）
-        var payloadZip = Path.Combine(AppContext.BaseDirectory, "payload.zip");
-        var payloadDir = Path.Combine(AppContext.BaseDirectory, "payload");
-        if (File.Exists(payloadZip))
-        {
-            using var stream = File.OpenRead(payloadZip);
-            using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
-            zip.ExtractToDirectory(installDir, true);
-        }
-        else if (Directory.Exists(payloadDir))
-        {
             log?.Invoke("正在复制程序文件...");
-            CopyDirectory(payloadDir, installDir);
+            CopyDirectory(staging, installDir);
+
+            // 复制自身作为卸载器
+            TryFileCopy(Application.ExecutablePath, uninstallPath);
+
+            File.WriteAllText(Path.Combine(installDir, "version.txt"),
+                $"MarkdownViewer {AppVersion}\r\n安装时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\r\n");
+
+            if (!File.Exists(exePath))
+                throw new FileNotFoundException("解压后未找到主程序：" + exePath);
+
+            log?.Invoke("正在创建快捷方式...");
+            if (opt.StartMenu)
+            {
+                var smDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName);
+                Directory.CreateDirectory(smDir);
+                CreateShortcut(Path.Combine(smDir, $"{AppName}.lnk"),
+                    exePath, installDir, "Markdown 阅读器");
+                CreateShortcut(Path.Combine(smDir, $"卸载 {AppName}.lnk"),
+                    uninstallPath, installDir, "卸载 MarkdownViewer");
+            }
+            if (opt.Desktop)
+            {
+                var desktop = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                    $"{AppName}.lnk");
+                CreateShortcut(desktop, exePath, installDir, "Markdown 阅读器");
+            }
+
+            if (opt.Associate)
+            {
+                log?.Invoke("正在关联 .md 文件...");
+                RegisterAssociation(exePath);
+            }
+
+            log?.Invoke("正在注册卸载信息...");
+            RegisterUninstall(installDir, exePath, uninstallPath);
+
+            NotifyAssocChanged();
+            succeeded = true;
+            log?.Invoke("安装完成。");
         }
-        else
+        finally
         {
-            throw new FileNotFoundException(
-                "未找到安装载荷 payload.zip。\n" +
-                "请将 payload.zip 与安装程序放在同一目录后重试。\n\n" +
-                "期望路径：" + payloadZip);
+            if (succeeded) TryDelete(staging);
+            else log?.Invoke("安装未完成，临时文件保留在：" + staging);
         }
+    }
 
-        // 复制自身作为卸载器
-        TryFileCopy(Application.ExecutablePath, uninstallPath);
-
-        File.WriteAllText(Path.Combine(installDir, "version.txt"),
-            $"MarkdownViewer {AppVersion}\r\n安装时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\r\n");
-
-        if (!File.Exists(exePath))
-            throw new FileNotFoundException("解压后未找到主程序：" + exePath);
-
-        log?.Invoke("正在创建快捷方式...");
-        if (opt.StartMenu)
+    /// <summary>确认主程序已退出（文件不再被占用）。</summary>
+    private static void EnsureAppStopped(string exePath)
+    {
+        if (!File.Exists(exePath)) return;
+        for (var i = 0; i < 10; i++)
         {
-            var smDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName);
-            Directory.CreateDirectory(smDir);
-            CreateShortcut(Path.Combine(smDir, $"{AppName}.lnk"),
-                exePath, installDir, "Markdown 阅读器");
-            CreateShortcut(Path.Combine(smDir, $"卸载 {AppName}.lnk"),
-                uninstallPath, installDir, "卸载 MarkdownViewer");
+            try
+            {
+                using var fs = new FileStream(exePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                return;
+            }
+            catch (IOException)
+            {
+                Thread.Sleep(200);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Thread.Sleep(200);
+            }
         }
-        if (opt.Desktop)
-        {
-            var desktop = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                $"{AppName}.lnk");
-            CreateShortcut(desktop, exePath, installDir, "Markdown 阅读器");
-        }
-
-        if (opt.Associate)
-        {
-            log?.Invoke("正在关联 .md 文件...");
-            RegisterAssociation(exePath);
-        }
-
-        log?.Invoke("正在注册卸载信息...");
-        RegisterUninstall(installDir, exePath, uninstallPath);
-
-        NotifyAssocChanged();
-        log?.Invoke("安装完成。");
+        throw new IOException(
+            "MarkdownViewer 仍在运行，无法覆盖安装。\n请完全退出程序（包括托盘/其它窗口）后重试。");
     }
 
     /* ============================ 卸载 ============================ */
@@ -209,7 +269,7 @@ internal static class Program
         Thread.Sleep(800);
 
         log?.Invoke("正在删除程序文件...");
-        DeleteInstalledFiles(installDir);
+        DeleteInstalledFiles(installDir, includeUserData: true);
         TryDeleteIfEmpty(installDir);
 
         log?.Invoke("正在删除快捷方式...");
@@ -272,7 +332,13 @@ internal static class Program
         foreach (var ext in MarkdownExts)
         {
             using (var k = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ext}"))
-                k.SetValue("", ProgId);
+            {
+                // 不抢占其它程序已注册的默认关联，只把本程序加入“打开方式”
+                var existing = k.GetValue("") as string;
+                if (string.IsNullOrEmpty(existing) ||
+                    string.Equals(existing, ProgId, StringComparison.OrdinalIgnoreCase))
+                    k.SetValue("", ProgId);
+            }
             using (var per = Registry.CurrentUser.CreateSubKey(
                        $@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}\OpenWithProgids"))
             {
@@ -363,11 +429,12 @@ internal static class Program
 
     private static readonly string[] AppDirs =
     {
-        "WebAssets", "runtimes", "MarkdownViewer.exe.WebView2", "userdata"
+        "WebAssets", "runtimes", "MarkdownViewer.exe.WebView2"
     };
 
-    /// <summary>删除本程序自身文件，保留用户放在安装目录里的其它文件。</summary>
-    private static void DeleteInstalledFiles(string installDir)
+    /// <summary>删除本程序自身文件，保留用户放在安装目录里的其它文件。
+    /// 升级/覆盖安装默认保留 userdata（设置、会话、草稿）。</summary>
+    private static void DeleteInstalledFiles(string installDir, bool includeUserData = false)
     {
         if (!Directory.Exists(installDir)) return;
 
@@ -376,6 +443,9 @@ internal static class Program
 
         foreach (var dir in AppDirs)
             TryDelete(Path.Combine(installDir, dir));
+
+        if (includeUserData)
+            TryDelete(Path.Combine(installDir, "userdata"));
 
         // WebView2/WPF 运行时相关 dll、xml（按前缀清理）
         foreach (var pattern in new[] { "Microsoft.Web.WebView2.*", "*.pdb" })
@@ -490,7 +560,7 @@ public class InstallForm : Form
 
         var title = new Label
         {
-            Text = "MarkdownViewer 1.1.0",
+            Text = "MarkdownViewer 1.1.1",
             Left = 24, Top = 18, Width = 480, Height = 34,
             Font = new Font("Microsoft YaHei UI", 16, FontStyle.Bold)
         };

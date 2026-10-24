@@ -26,6 +26,15 @@
             .replace(/"/g, "&quot;");
     }
 
+    /* 逐段编码相对路径：避免已转义的 %20 被再次变成 %2520 */
+    function encodeRelativePath(rel) {
+        return String(rel).split("/").map(function (segment) {
+            var decoded = segment;
+            try { decoded = decodeURIComponent(segment); } catch (e) { /* 非法转义则按原样处理 */ }
+            return encodeURIComponent(decoded);
+        }).join("/");
+    }
+
     var LANG_CONF = {
         js: {
             slash: true,
@@ -165,7 +174,8 @@
     var md = window.markdownit({
         html: false,
         linkify: true,
-        typographer: true,
+        // 关闭 typographer：避免 -- 变 –、引号变弯引号，导致“查找”结果与预览文本不一致
+        typographer: false,
         breaks: false,
         highlight: function (code, lang) {
             var key = normalizeLang(lang);
@@ -222,9 +232,9 @@
             if (src && !isAbsolute &&
                 !/^[a-z][a-z0-9+.-]*:/i.test(src) && src.indexOf("//") !== 0) {
                 var rel = src.replace(/^\.\//, "").replace(/\\/g, "/");
-                // encodeURI 不会转义 # 和 ?，文件名包含它们时需要手动转义，否则会被当作锚点/查询串
-                var encoded = encodeURI(rel).replace(/#/g, "%23").replace(/\?/g, "%3F");
-                token.attrs[srcIndex][1] = "https://mdfile.local/" + encoded;
+                // 以 / 开头的路径也视作文档目录内相对路径（虚拟主机根就是文档目录）
+                if (rel.charAt(0) === "/") rel = rel.replace(/^\/+/, "");
+                token.attrs[srcIndex][1] = "https://mdfile.local/" + encodeRelativePath(rel);
             }
         }
         return defaultImageRender(tokens, idx, options, env, self);
@@ -280,6 +290,10 @@
     var editorFollowTarget = 0;
     var suppressChange = false;
     var renderTimer = null;
+    var draftTimer = null;
+    var refreshTimer = null;
+    var findInputTimer = null;
+    var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
     var cm = CodeMirror(document.getElementById("editor"), {
@@ -313,6 +327,7 @@
             postMessage({ type: "dirty", tabId: currentTabId, dirty: dirty });
         }
         scheduleRender();
+        scheduleDraftSync();
     });
 
     // 编辑/分栏模式下：滚动编辑器 / 移动光标时，目录跟随高亮当前章节
@@ -358,17 +373,19 @@
     }
 
     /* ===================== 渲染 ===================== */
-    function renderMarkdown(source, tabId, restoreScroll) {
+    function renderMarkdown(source, tabId, restoreScroll, force) {
         // 内容与标签都没变时不重建 DOM（避免打字时整篇重排、滚动跳动）
         var existing = buffers[tabId];
-        if (renderedTabId === tabId && existing && existing.renderedText === source) {
+        if (!force && renderedTabId === tabId && existing && existing.renderedText === source) {
             return;
         }
+        // 重建前清空代码块缓存，避免长期运行后无上限增长
+        codeSnippets = [];
         renderedTabId = tabId;
         if (existing) existing.renderedText = source;
 
         var tokens = md.parse(source, {});
-        var used = {};
+        var used = Object.create(null);
         var toc = [];
         headingLines = {};
         headingList = [];
@@ -446,10 +463,15 @@
         if (isCurrent) b.text = cm.getValue();
         var cursor = isCurrent ? cm.getCursor() : (b.cursor || { line: 0, ch: 0 });
         var info = isCurrent ? cm.getScrollInfo() : null;
+        // 当前标签用真实滚动位置（b.previewScroll 只在渲染/切换时更新，会偏旧）
+        var previewScroll = isCurrent
+            ? (viewMode === "edit" ? (b.previewScroll || 0) : previewPane.scrollTop)
+            : (b.previewScroll || 0);
+        if (isCurrent && viewMode !== "edit") b.previewScroll = previewScroll;
         return JSON.stringify({
             text: b.text,
             dirty: b.dirty,
-            previewScroll: b.previewScroll || 0,
+            previewScroll: previewScroll,
             editorScroll: info ? info.top : (b.editScroll ? b.editScroll.top : 0),
             cursorLine: cursor.line || 0,
             cursorCh: cursor.ch || 0
@@ -749,7 +771,8 @@
     var findSep = findBar.querySelector(".find-sep");
     var replaceOneBtn = document.getElementById("replace-one");
     var replaceAllBtn = document.getElementById("replace-all");
-    var MAX_FIND = 2000;
+    var MAX_FIND = 5000;
+    var MAX_MARKS = 2000;
 
     var findState = {
         open: false,
@@ -805,14 +828,15 @@
         findState.previewMarks = [];
     }
 
-    function collectMatches(term) {
+    function collectMatches(term, limit) {
         var result = [];
         if (!term) return result;
+        var max = limit || MAX_FIND;
         var text = cm.getValue();
         var lower = text.toLowerCase();
         var needle = term.toLowerCase();
         var at = 0;
-        while (result.length < MAX_FIND) {
+        while (result.length < max) {
             var idx = lower.indexOf(needle, at);
             if (idx < 0) break;
             result.push({ from: idx, to: idx + term.length });
@@ -823,11 +847,13 @@
 
     function paintEditorMarks() {
         clearEditorMarks();
-        findState.matches.forEach(function (m, i) {
+        var max = Math.min(findState.matches.length, MAX_MARKS);
+        for (var i = 0; i < max; i++) {
+            var m = findState.matches[i];
             var cls = i === findState.index ? "find-hit find-hit-current" : "find-hit";
             findState.editorMarks.push(cm.markText(
                 cm.posFromIndex(m.from), cm.posFromIndex(m.to), { className: cls }));
-        });
+        }
     }
 
     function paintPreviewMarks(term) {
@@ -852,12 +878,14 @@
         while (walker.nextNode()) nodes.push(walker.currentNode);
 
         nodes.forEach(function (node) {
+            if (findState.previewMarks.length >= MAX_MARKS) return;
             var text = node.nodeValue;
             var lower = text.toLowerCase();
             var frag = document.createDocumentFragment();
             var pos = 0;
             var at;
             while ((at = lower.indexOf(needle, pos)) >= 0) {
+                if (findState.previewMarks.length >= MAX_MARKS) break;
                 if (at > pos) frag.appendChild(document.createTextNode(text.slice(pos, at)));
                 var mark = document.createElement("mark");
                 mark.className = "find-hit";
@@ -944,19 +972,26 @@
     }
 
     function replaceAll() {
-        if (!findState.matches.length) return;
+        if (!findState.term) return;
+        // 替换全部不被高亮上限截断（上限 100000 仅作防爆）
+        var all = collectMatches(findState.term, 100000);
+        if (!all.length) return;
         var replacement = replaceInput.value;
         cm.operation(function () {
-            for (var i = findState.matches.length - 1; i >= 0; i--) {
-                var m = findState.matches[i];
+            for (var i = all.length - 1; i >= 0; i--) {
+                var m = all[i];
                 cm.replaceRange(replacement,
                     cm.posFromIndex(m.from), cm.posFromIndex(m.to), "+replaceAll");
             }
         });
+        postMessage({ type: "status", text: "已替换 " + all.length + " 处" });
         runFind(findInput.value, false);
     }
 
-    findInput.addEventListener("input", function () { runFind(findInput.value, false); });
+    findInput.addEventListener("input", function () {
+        if (findInputTimer) clearTimeout(findInputTimer);
+        findInputTimer = setTimeout(function () { runFind(findInput.value, false); }, 150);
+    });
     findInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter") {
             e.preventDefault();
@@ -1032,6 +1067,10 @@
     /* ===================== 粘贴 / 拖拽图片 ===================== */
     function sendImageFile(file) {
         if (!file || !/^image\//.test(file.type || "")) return;
+        if (file.size > 15 * 1024 * 1024) {
+            postMessage({ type: "status", text: "图片超过 15MB，已取消插入" });
+            return;
+        }
         if (currentTabId == null) return;
         var reader = new FileReader();
         reader.onload = function () {
@@ -1211,11 +1250,21 @@
         cm.setOption("theme", suffix ? "mdview " + suffix : "mdview");
     }
 
-    function setEditorSilent(text) {
+    function switchToBuffer(b) {
         suppressChange = true;
-        cm.setValue(text);
-        cm.clearHistory();
+        if (!b.doc) b.doc = CodeMirror.Doc(b.text || "", "gfm");
+        if (cm.getDoc() !== b.doc) cm.swapDoc(b.doc);
         suppressChange = false;
+    }
+
+    /* 定期把当前编辑内容同步给宿主，供崩溃/内核重启后恢复 */
+    function scheduleDraftSync() {
+        if (draftTimer) clearTimeout(draftTimer);
+        draftTimer = setTimeout(function () {
+            if (currentTabId == null) return;
+            var b = buffers[currentTabId];
+            if (b) postMessage({ type: "draft", tabId: currentTabId, text: b.text });
+        }, 1500);
     }
 
     /* 调试 / 自动化测试接口（CDP 冒烟测试使用，不影响正常功能） */
@@ -1253,7 +1302,11 @@
             var root = document.documentElement;
             root.style.setProperty("--preview-font-size", (16 * z).toFixed(2) + "px");
             root.style.setProperty("--editor-font-size", (14.5 * z).toFixed(2) + "px");
-            try { cm.refresh(); } catch (e) { /* 尚未初始化时忽略 */ }
+            // 连续滚轮缩放时合并 refresh，避免每次像素变化都重排
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(function () {
+                try { cm.refresh(); } catch (e) { /* 尚未初始化时忽略 */ }
+            }, 150);
         }
         if (typeof data.splitRatio === "number") {
             splitRatio = Math.min(0.85, Math.max(0.15, data.splitRatio));
@@ -1264,8 +1317,14 @@
         }
     }
 
-    function insertTextAtCursor(text) {
-        if (currentTabId == null || !text) return;
+    function insertTextAtCursor(text, tabId) {
+        if (!text) return;
+        if (tabId && tabId !== currentTabId) {
+            if (!pendingInserts[tabId]) pendingInserts[tabId] = [];
+            pendingInserts[tabId].push(text);
+            return;
+        }
+        if (currentTabId == null) return;
         cm.replaceSelection(text, "end");
         cm.focus();
     }
@@ -1286,6 +1345,7 @@
         if (!data || typeof data !== "object") return;
 
         if (data.type === "load") {
+            var keepPreview = 0;
             // 记录旧标签的滚动位置（编辑独占视图时预览隐藏，保留原记录）
             if (currentTabId && buffers[currentTabId]) {
                 buffers[currentTabId].editScroll = cm.getScrollInfo();
@@ -1293,6 +1353,7 @@
                 if (viewMode !== "edit") {
                     buffers[currentTabId].previewScroll = previewPane.scrollTop;
                 }
+                keepPreview = buffers[currentTabId].previewScroll || 0;
             }
 
             currentTabId = data.tabId || null;
@@ -1311,21 +1372,31 @@
                     dirty: !!data.dirty,
                     // 无脏标记时，刚加载的内容就是「已保存基线」
                     savedText: data.dirty ? null : initialText,
+                    // 每个标签独立 Doc：切换标签时用 swapDoc，撤销历史不会丢
+                    doc: CodeMirror.Doc(initialText, "gfm"),
                     editScroll: null,
                     cursor: null,
-                    previewScroll: data.initialScroll || 0
+                    // reset（重新加载/另存为）时保留当前滚动；首次打开时用宿主传入的会话位置
+                    previewScroll: data.reset
+                        ? (keepPreview || data.initialScroll || 0)
+                        : (data.initialScroll || 0)
                 };
             } else if (currentTabId && data.editText !== undefined && data.editText !== null) {
-                // 跨窗口带来的编辑内容
-                buffers[currentTabId].text = data.editText;
-                buffers[currentTabId].dirty = !!data.dirty;
-                buffers[currentTabId].savedText = data.dirty ? null : data.editText;
+                // 跨窗口带来的编辑内容：同步到该标签的 Doc
+                var eb = buffers[currentTabId];
+                eb.text = data.editText;
+                eb.dirty = !!data.dirty;
+                eb.savedText = data.dirty ? null : data.editText;
+                suppressChange = true;
+                if (eb.doc) eb.doc.setValue(data.editText);
+                else eb.doc = CodeMirror.Doc(data.editText, "gfm");
+                suppressChange = false;
             }
 
             var b = currentTabId ? buffers[currentTabId] : null;
             if (b) {
-                setEditorSilent(b.text);
-                renderMarkdown(b.text, currentTabId, data.initialScroll || b.previewScroll || 0);
+                switchToBuffer(b);
+                renderMarkdown(b.text, currentTabId, b.previewScroll || 0);
                 if (typeof data.cursorLine === "number" && data.cursorLine >= 0) {
                     var line = Math.min(data.cursorLine, Math.max(0, cm.lineCount() - 1));
                     var ch = typeof data.cursorCh === "number" ? data.cursorCh : 0;
@@ -1338,6 +1409,12 @@
                 } else if (b.editScroll) {
                     cm.scrollTo(b.editScroll.left, b.editScroll.top);
                 }
+                // 应用在该标签加载前排队等待插入的内容（例如粘贴图片）
+                if (pendingInserts[currentTabId]) {
+                    var pending = pendingInserts[currentTabId];
+                    delete pendingInserts[currentTabId];
+                    pending.forEach(function (text) { cm.replaceSelection(text, "end"); });
+                }
             }
         } else if (data.type === "settings") {
             applySettings(data);
@@ -1345,7 +1422,7 @@
             if (data.mode === "next") findNext(1);
             else openFindBar(data.mode === "replace" ? "replace" : "find");
         } else if (data.type === "insert") {
-            insertTextAtCursor(data.text || "");
+            insertTextAtCursor(data.text || "", data.tabId);
         } else if (data.type === "gotoLine") {
             gotoLine(data.line || 0, data.ch || 0);
         } else if (data.type === "scrollTo") {
@@ -1355,15 +1432,31 @@
         } else if (data.type === "view") {
             setView(data.mode);
         } else if (data.type === "saved") {
-            // 保存成功：清脏标记，并把当前内容记为新的“已保存基线”
+            // 保存成功：以“实际写入磁盘的文本”作为新基线；保存期间新增的编辑仍保持未保存状态
             var sb = buffers[data.tabId];
             if (sb) {
-                sb.savedText = sb.text;
-                sb.dirty = false;
+                if (typeof data.text === "string") {
+                    sb.savedText = data.text;
+                    var stillDirty = sb.text !== data.text;
+                    if (stillDirty !== sb.dirty) {
+                        sb.dirty = stillDirty;
+                        postMessage({ type: "dirty", tabId: data.tabId, dirty: stillDirty });
+                    }
+                } else {
+                    sb.savedText = sb.text;
+                    sb.dirty = false;
+                }
             }
         } else if (data.type === "dropTab") {
             // 标签已关闭/已移交给其他窗口：释放缓冲区，避免内存泄漏
-            if (data.tabId) delete buffers[data.tabId];
+            if (data.tabId) {
+                delete buffers[data.tabId];
+                delete pendingInserts[data.tabId];
+            }
+        } else if (data.type === "reloadImages") {
+            // 另存为后文件目录变了：强制重建预览，让相对图片重新请求
+            var rb = currentTabId ? buffers[currentTabId] : null;
+            if (rb) renderMarkdown(rb.text, currentTabId, previewPane.scrollTop, true);
         } else if (data.type === "focusEditor") {
             cm.focus();
         }
@@ -1396,14 +1489,14 @@
     cmWrapper.addEventListener("touchstart", onEditorUserScroll, { passive: true });
     cmWrapper.addEventListener("keydown", onEditorUserScroll);
 
-    window.addEventListener("keydown", function (e) {
-        var t = e.target;
-        if (!(t && t.closest && t.closest(".CodeMirror"))) onPreviewUserScroll();
-    });
-
     // 焦点不在 CodeMirror 中时（如点击预览/目录）也能用 Ctrl+S 保存
     // Ctrl+W 关闭当前标签；Ctrl+Tab / Ctrl+Shift+Tab 切换标签
     window.addEventListener("keydown", function (e) {
+        if (e.key === "F5") {
+            e.preventDefault();
+            postMessage({ type: "reload" });
+            return;
+        }
         if (e.key === "F11") {
             e.preventDefault();
             postMessage({ type: "fullscreen" });
@@ -1429,6 +1522,22 @@
         if (!(e.ctrlKey || e.metaKey)) return;
         var t = e.target;
         var inEditor = !!(t && t.closest && t.closest(".CodeMirror"));
+
+        if (e.shiftKey && (e.key === "s" || e.key === "S")) {
+            e.preventDefault();
+            postMessage({ type: "saveAs" });
+            return;
+        }
+        if (e.shiftKey && (e.key === "f" || e.key === "F")) {
+            e.preventDefault();
+            postMessage({ type: "searchFolder" });
+            return;
+        }
+        if (e.key === "o" || e.key === "O") {
+            e.preventDefault();
+            postMessage({ type: "openFile" });
+            return;
+        }
 
         if (e.key === "s" || e.key === "S") {
             if (inEditor) return; // 编辑器内已处理
