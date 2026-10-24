@@ -132,8 +132,22 @@
 
     function highlightCode(code, lang) {
         var key = normalizeLang(lang);
+        // 优先使用内置 highlight.js（覆盖更全、规则更准确），失败时回退到轻量高亮
+        if (window.hljs && key && key !== "text" && window.hljs.getLanguage(key)) {
+            try {
+                return {
+                    html: window.hljs.highlight(code, {
+                        language: key,
+                        ignoreIllegals: true
+                    }).value,
+                    engine: "hljs",
+                    lang: key
+                };
+            } catch (e) { /* 非法代码交给自研高亮兜底 */ }
+        }
+
         var conf = LANG_CONF[key];
-        if (!conf) return escapeHtml(code);
+        if (!conf) return { html: escapeHtml(code), engine: "custom", lang: key };
 
         var kw = {};
         var kwList = (conf.kw || "").split(" ");
@@ -168,7 +182,7 @@
                 : escapeHtml(m[0]);
         }
         out += escapeHtml(code.slice(last));
-        return out;
+        return { html: out, engine: "custom", lang: key };
     }
 
     var md = window.markdownit({
@@ -178,15 +192,61 @@
         typographer: false,
         breaks: false,
         highlight: function (code, lang) {
-            var key = normalizeLang(lang);
-            var body = highlightCode(code, lang);
+            var result = highlightCode(code, lang);
             var idx = codeSnippets.push(code) - 1;
+            var codeClass = (result.engine === "hljs" ? "hljs " : "") +
+                "language-" + escapeHtml(result.lang);
             // 必须以 <pre 开头，markdown-it 才会原样使用（不再包一层 pre/code）
             return '<pre class="code-block"><button type="button" class="copy-code" data-code="' +
-                idx + '" title="复制代码">复制</button><code class="language-' +
-                escapeHtml(key) + '">' + body + "</code></pre>";
+                idx + '" title="复制代码">复制</button><code class="' + codeClass + '">' +
+                result.html + "</code></pre>";
         }
     });
+
+    /* KaTeX：行内 $...$ / 单行 $$...$$ 在解析阶段直接生成公式 HTML，避免下划线等被当作 Markdown 语法；
+       跨行 $$ 块与 \(...\) / \[...\] 由渲染后的 auto-render 处理 */
+    if (window.katex) {
+        md.inline.ruler.after("escape", "math_inline", function (state, silent) {
+            var src = state.src;
+            var start = state.pos;
+            if (src.charCodeAt(start) !== 0x24) return false;
+            if (start > 0 && src.charCodeAt(start - 1) === 0x5C) return false; // \$ 转义
+
+            var doubleDollar = src.charCodeAt(start + 1) === 0x24;
+            var marker = doubleDollar ? "$$" : "$";
+            var from = start + marker.length;
+            var end = src.indexOf(marker, from);
+            if (end < 0) return false;
+
+            var content = src.slice(from, end);
+            if (!content) return false;
+            if (content.indexOf("\n") >= 0) return false; // 跨行公式交给 auto-render
+            if (!doubleDollar) {
+                // 形如 “$5 和 $10” 的货币写法不当作公式
+                if (/^\s|\s$/.test(content)) return false;
+                if (content.length > 2000) return false;
+            }
+
+            var html;
+            try {
+                html = window.katex.renderToString(content, {
+                    displayMode: doubleDollar,
+                    throwOnError: false,
+                    strict: "ignore"
+                });
+            } catch (e) {
+                return false;
+            }
+            if (silent) {
+                state.pos = end + marker.length;
+                return true;
+            }
+            var token = state.push("html_inline", "", 0);
+            token.content = html;
+            state.pos = end + marker.length;
+            return true;
+        });
+    }
 
     /* GFM 任务列表：把 "- [x] xxx" 渲染成带勾选框的列表项 */
     md.core.ruler.after("inline", "task_list", function (state) {
@@ -293,6 +353,7 @@
     var draftTimer = null;
     var refreshTimer = null;
     var findInputTimer = null;
+    var mermaidTimer = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -372,6 +433,106 @@
         }, 300);
     }
 
+    /* 渲染后处理数学公式：行内/单行 $ 已在解析阶段处理，这里补齐跨行 $$ 与 \(...\) / \[...\] */
+    function renderMathInPreview() {
+        if (!window.renderMathInElement) return;
+        var root = document.getElementById("md-body");
+        try {
+            window.renderMathInElement(root, {
+                delimiters: [
+                    { left: "$$", right: "$$", display: true },
+                    { left: "\\[", right: "\\]", display: true },
+                    { left: "\\(", right: "\\)", display: false }
+                ],
+                throwOnError: false,
+                processEscapes: true,
+                ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code", "option"],
+                ignoredClasses: ["no-math"]
+            });
+        } catch (e) {
+            console.warn("KaTeX render failed", e);
+        }
+    }
+
+    function mermaidThemeName() {
+        return document.body.classList.contains("theme-dark") ? "dark" : "default";
+    }
+
+    function scheduleMermaidRender(force) {
+        if (mermaidTimer) clearTimeout(mermaidTimer);
+        mermaidTimer = setTimeout(function () {
+            mermaidTimer = null;
+            renderMermaidDiagrams(force);
+        }, 80);
+    }
+
+    /* 把 ```mermaid 代码块替换成 Mermaid 图；失败时保留源码并标记错误 */
+    function renderMermaidDiagrams(force) {
+        if (!window.mermaid) return;
+        var root = document.getElementById("md-body");
+
+        var codeBlocks = root.querySelectorAll("pre > code.language-mermaid");
+        for (var i = 0; i < codeBlocks.length; i++) {
+            var code = codeBlocks[i];
+            var pre = code.parentNode;
+            if (!pre || pre.tagName !== "PRE") continue;
+            var source = code.textContent || "";
+            var div = document.createElement("div");
+            div.className = "mermaid";
+            div.setAttribute("data-mermaid-src", source);
+            div.textContent = source;
+            pre.parentNode.replaceChild(div, pre);
+        }
+
+        var nodes = Array.prototype.slice.call(root.querySelectorAll(".mermaid"));
+        if (!nodes.length) return;
+
+        try {
+            window.mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: mermaidThemeName(),
+                flowchart: { htmlLabels: false, useMaxWidth: true },
+                sequence: { useMaxWidth: true },
+                gantt: { useMaxWidth: true }
+            });
+        } catch (e) {
+            console.warn("Mermaid initialize failed", e);
+        }
+
+        var todo = [];
+        nodes.forEach(function (node) {
+            if (!force && node.getAttribute("data-processed") === "true") return;
+            if (force) {
+                var src = node.getAttribute("data-mermaid-src");
+                node.removeAttribute("data-processed");
+                node.classList.remove("mermaid-error");
+                node.textContent = src || node.textContent || "";
+            }
+            todo.push(node);
+        });
+        if (!todo.length) return;
+
+        try {
+            var result = window.mermaid.run
+                ? window.mermaid.run({ nodes: todo, suppressErrors: true })
+                : window.mermaid.init(undefined, todo);
+            if (result && result.catch) {
+                result.catch(function (err) {
+                    console.warn("Mermaid render failed", err);
+                    todo.forEach(function (node) {
+                        if (node.getAttribute("data-processed") !== "true") {
+                            node.classList.add("mermaid-error");
+                        }
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn("Mermaid render failed", e);
+            todo.forEach(function (node) { node.classList.add("mermaid-error"); });
+        }
+    }
+
     /* ===================== 渲染 ===================== */
     function renderMarkdown(source, tabId, restoreScroll, force) {
         // 内容与标签都没变时不重建 DOM（避免打字时整篇重排、滚动跳动）
@@ -407,6 +568,10 @@
 
         var html = md.renderer.render(tokens, md.options, {});
         document.getElementById("md-body").innerHTML = html;
+
+        // 公式静态渲染；Mermaid 图异步渲染（避免每次输入都同步阻塞）
+        renderMathInPreview();
+        scheduleMermaidRender(false);
 
         // 重新渲染后旧的查找高亮已随 innerHTML 丢失，重新计算
         findState.previewMarks = [];
@@ -482,11 +647,57 @@
         return JSON.stringify({ splitRatio: splitRatio, viewMode: viewMode });
     };
 
+    /* 导出 HTML：把 KaTeX 字体转成 data URI，导出的单文件不依赖外部字体目录 */
+    var katexExportCssPromise = null;
+
+    function fetchAsDataUrl(url) {
+        return fetch(url).then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.arrayBuffer();
+        }).then(function (buf) {
+            var bytes = new Uint8Array(buf);
+            var binary = "";
+            for (var i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            return "data:font/woff2;base64," + btoa(binary);
+        });
+    }
+
+    function getKatexExportCss() {
+        if (katexExportCssPromise) return katexExportCssPromise;
+        katexExportCssPromise = fetch("vendor/katex/katex.min.css").then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.text();
+        }).then(function (css) {
+            var urls = [];
+            css.replace(/url\((fonts\/[^)]+?\.woff2)\)/g, function (_, url) {
+                if (urls.indexOf(url) < 0) urls.push(url);
+                return "url(" + url + ")";
+            });
+            return Promise.all(urls.map(function (url) {
+                return fetchAsDataUrl("vendor/katex/" + url)
+                    .then(function (data) { return { url: url, data: data }; })
+                    .catch(function () { return null; });
+            })).then(function (items) {
+                items.forEach(function (item) {
+                    if (item) css = css.split("url(" + item.url + ")").join("url(" + item.data + ")");
+                });
+                return css;
+            });
+        }).catch(function (e) {
+            console.warn("KaTeX CSS export failed", e);
+            return "";
+        });
+        return katexExportCssPromise;
+    }
+
     /* 导出当前预览为独立 HTML（内联样式，文件自带主题） */
     window.buildExportHtml = function (title) {
         return Promise.all([
             fetch("css/style.css").then(function (r) { return r.text(); }),
-            fetch("css/code-and-find.css").then(function (r) { return r.text(); })
+            fetch("css/code-and-find.css").then(function (r) { return r.text(); }),
+            getKatexExportCss()
         ]).then(function (parts) {
             var body = document.getElementById("md-body").cloneNode(true);
             body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
@@ -500,10 +711,12 @@
                 "html,body{height:auto;overflow:auto;margin:0;background:" +
                 (dark ? "#1E1E1E" : green ? "#C7EDCC" : "#ffffff") + "}" +
                 ".markdown-body{max-width:920px;margin:0 auto;padding:32px 40px 80px}" +
-                "#workbench,#editor-pane,#edit-splitter,#preview-pane{display:none!important}";
+                "#workbench,#editor-pane,#edit-splitter,#preview-pane{display:none!important}" +
+                ".markdown-body .mermaid{text-align:center;overflow-x:auto;margin:16px 0}" +
+                ".markdown-body .mermaid svg{max-width:100%!important;height:auto}";
             return "<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/>" +
                 "<title>" + escapeHtml(title || "MarkdownViewer") + "</title><style>\n" +
-                parts[0] + "\n" + parts[1] + "\n" + overrides +
+                parts[0] + "\n" + parts[1] + "\n" + (parts[2] || "") + overrides +
                 "\n</style></head><body class=\"" + themeClass + "\">" +
                 body.outerHTML + "</body></html>";
         });
@@ -1248,6 +1461,8 @@
         // CodeMirror 主题：基础 mdview + 配色后缀
         var suffix = mode === "dark" ? "dark" : mode === "green" ? "green" : "";
         cm.setOption("theme", suffix ? "mdview " + suffix : "mdview");
+        // Mermaid 的明暗主题在初始化时决定，主题切换后需要重绘
+        scheduleMermaidRender(true);
     }
 
     function switchToBuffer(b) {

@@ -156,6 +156,64 @@ body.theme-dark .tok-fn { color: #dcdcaa; }
 body.theme-dark .tok-type { color: #4ec9b0; }
 body.theme-dark .tok-punc { color: #9da5b4; }
 
+/* highlight.js 配色（与上面自研高亮保持同一套色板） */
+.hljs { background: transparent; color: inherit; }
+.hljs-comment, .hljs-quote { color: #6a737d; font-style: italic; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #0a7d33; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link { color: #0550ae; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-meta .hljs-keyword { color: #cf222e; }
+.hljs-title, .hljs-section, .hljs-title.function_, .hljs-selector-id { color: #8250df; }
+.hljs-type, .hljs-title.class_, .hljs-built_in, .hljs-selector-class { color: #953800; }
+.hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-property, .hljs-params { color: #0550ae; }
+.hljs-meta { color: #57606a; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+.hljs-deletion { color: #cf222e; }
+
+body.theme-green .hljs-comment, body.theme-green .hljs-quote { color: #4a6b52; }
+body.theme-green .hljs-string, body.theme-green .hljs-regexp, body.theme-green .hljs-addition,
+body.theme-green .hljs-attribute { color: #175c36; }
+body.theme-green .hljs-number, body.theme-green .hljs-symbol, body.theme-green .hljs-bullet { color: #1b6b33; }
+body.theme-green .hljs-keyword, body.theme-green .hljs-selector-tag, body.theme-green .hljs-literal { color: #9b2c2c; }
+body.theme-green .hljs-title, body.theme-green .hljs-section { color: #6b21a8; }
+body.theme-green .hljs-type, body.theme-green .hljs-built_in { color: #8a4b0f; }
+body.theme-green .hljs-attr, body.theme-green .hljs-variable, body.theme-green .hljs-params { color: #1b6b33; }
+
+body.theme-dark .hljs-comment, body.theme-dark .hljs-quote { color: #6a9955; }
+body.theme-dark .hljs-string, body.theme-dark .hljs-regexp, body.theme-dark .hljs-addition,
+body.theme-dark .hljs-attribute { color: #ce9178; }
+body.theme-dark .hljs-number, body.theme-dark .hljs-symbol, body.theme-dark .hljs-bullet { color: #b5cea8; }
+body.theme-dark .hljs-keyword, body.theme-dark .hljs-selector-tag, body.theme-dark .hljs-literal { color: #569cd6; }
+body.theme-dark .hljs-title, body.theme-dark .hljs-section { color: #dcdcaa; }
+body.theme-dark .hljs-type, body.theme-dark .hljs-built_in { color: #4ec9b0; }
+body.theme-dark .hljs-attr, body.theme-dark .hljs-variable, body.theme-dark .hljs-params { color: #9cdcfe; }
+body.theme-dark .hljs-meta { color: #9da5b4; }
+
+/* ===================== KaTeX / Mermaid ===================== */
+.markdown-body .katex { font-size: 1.05em; }
+.markdown-body .katex-display {
+    display: block;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 0;
+}
+.markdown-body .mermaid {
+    margin: 16px 0;
+    text-align: center;
+    overflow-x: auto;
+}
+.markdown-body .mermaid svg { max-width: 100%; height: auto; }
+.markdown-body .mermaid.mermaid-error {
+    color: #cf222e;
+    white-space: pre-wrap;
+    text-align: left;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    border: 1px solid #f0b4b4;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
 /* ===================== 图片灯箱 ===================== */
 .lightbox {
     position: fixed;
@@ -208,6 +266,13 @@ body.theme-dark .tok-punc { color: #9da5b4; }
         page-break-inside: avoid;
         break-inside: avoid;
     }
+    .markdown-body .mermaid,
+    .markdown-body .katex-display {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        overflow: visible;
+    }
+    .markdown-body .mermaid svg { max-width: 100% !important; }
     .markdown-body a { color: inherit; text-decoration: none; }
     .markdown-body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }

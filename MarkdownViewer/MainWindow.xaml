@@ -409,6 +409,14 @@
                             Tag="Utf16BE" Click="EncodingMenu_Click"/>
                     <Button Style="{StaticResource RibbonButton}" Content="GB18030"
                             Tag="Gb18030" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="Big5"
+                            Tag="Big5" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="Shift-JIS"
+                            Tag="ShiftJis" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="EUC-KR"
+                            Tag="EucKr" Click="EncodingMenu_Click"/>
+                    <Button Style="{StaticResource RibbonButton}" Content="Windows-1252"
+                            Tag="Windows1252" Click="EncodingMenu_Click"/>
                     <Border Style="{StaticResource RibbonSeparator}"/>
                     <Button Style="{StaticResource RibbonButton}" Content="按当前编码重新读取"
                             Click="ReloadWithEncoding_Click"/>

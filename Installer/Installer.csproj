@@ -9,9 +9,9 @@
     <AssemblyName>MarkdownViewer-Setup</AssemblyName>
     <RootNamespace>MarkdownViewerInstaller</RootNamespace>
     <ApplicationIcon>..\MarkdownViewer\app.ico</ApplicationIcon>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Product>MarkdownViewer Installer</Product>
-    <FileVersion>1.1.1.0</FileVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <!-- 单文件自包含：用户机器无需安装 .NET 运行时；启用压缩减小体积 -->
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>

@@ -10,13 +10,13 @@
     <RootNamespace>MarkdownViewer</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Product>MarkdownViewer</Product>
     <Authors>tobegmup</Authors>
     <Company>tobegmup</Company>
     <Copyright>Copyright © 2026 tobegmup</Copyright>
-    <FileVersion>1.1.1.0</FileVersion>
-    <AssemblyVersion>1.1.1.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,6 +24,8 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <!-- GB2312/GB18030 等旧编码支持 -->
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <!-- Mozilla/uchardet 编码探测器（Big5、Shift-JIS、EUC-KR、Windows-125x 等） -->
+    <PackageReference Include="UTF.Unknown" Version="2.8.0" />
   </ItemGroup>
 
   <ItemGroup>

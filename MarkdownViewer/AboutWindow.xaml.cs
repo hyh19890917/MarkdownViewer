@@ -26,7 +26,7 @@ namespace MarkdownViewer
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             VersionText.Text = version != null
                 ? $"{version.Major}.{version.Minor}.{version.Build}"
-                : "1.1.1";
+                : "1.2.0";
             ReleaseText.Text = ReleaseDate;
             AuthorText.Text = Author;
             LicenseText.Text = LicenseName;

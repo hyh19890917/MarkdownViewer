@@ -13,6 +13,7 @@ namespace MarkdownViewer.Helpers
         public string Text { get; set; } = "";
         public bool Dirty { get; set; }
         public string Encoding { get; set; } = "Utf8NoBom";
+        public int CodePage { get; set; }
         public double PreviewScroll { get; set; }
         public int CursorLine { get; set; }
         public int CursorCh { get; set; }

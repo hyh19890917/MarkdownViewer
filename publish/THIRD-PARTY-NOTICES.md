@@ -45,3 +45,39 @@ WebView2 SDK 依据 MIT 许可证发布，详细文本见 NuGet 包内 LICENSE �
 - 用途：Chromium 运行时（目标机运行所需）
 - 说明：微软提供的免费运行时，非代码组件，随 Windows 分发或可由安装包引导安装。其条款见：
   https://developer.microsoft.com/microsoft-edge/webview2/
+
+## highlight.js
+
+- 用途：代码块语法高亮（前端 JS）
+- 许可证：**BSD-3-Clause**
+- 项目主页：https://github.com/highlightjs/highlight.js
+- 版权：Copyright (c) 2006-2024 Josh Goebel and other contributors
+
+完整许可证文本随程序放在 `WebAssets/vendor/highlight/LICENSE`。
+
+## KaTeX
+
+- 用途：数学公式渲染（前端 JS + 字体）
+- 许可证：**MIT**
+- 项目主页：https://github.com/KaTeX/KaTeX
+- 版权：Copyright (c) 2013-2020 Khan Academy and other contributors
+
+完整许可证文本随程序放在 `WebAssets/vendor/katex/LICENSE`。
+
+## Mermaid
+
+- 用途：流程图 / 时序图等图表渲染（前端 JS）
+- 许可证：**MIT**
+- 项目主页：https://github.com/mermaid-js/mermaid
+- 版权：Copyright (c) 2014-2022 Knut Sveidqvist
+
+完整许可证文本随程序放在 `WebAssets/vendor/mermaid/LICENSE`。
+
+## UTF.Unknown
+
+- 用途：Mozilla/uchardet 字符编码探测器（C#）
+- 许可证：**MPL 1.1 / GPL 2.0+ / LGPL 2.1+**
+- 项目主页：https://github.com/CharsetDetector/UTF-unknown
+- 说明：NuGet 包 `UTF.Unknown`，用于 Big5、Shift-JIS、EUC-KR、Windows-125x 等编码识别。
+
+其许可证允许在 GPL 项目中组合使用；完整文本见 NuGet 包内 LICENSE 文件。

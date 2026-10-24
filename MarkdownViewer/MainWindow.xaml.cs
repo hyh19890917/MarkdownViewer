@@ -509,6 +509,7 @@ namespace MarkdownViewer
                         Text = keepText ? snap.Text : "",
                         Dirty = tab.IsDirty,
                         Encoding = tab.Encoding.ToString(),
+                        CodePage = tab.EncodingCodePage,
                         PreviewScroll = snap.PreviewScroll,
                         EditorScroll = snap.EditorScroll,
                         CursorLine = snap.CursorLine,
@@ -548,13 +549,16 @@ namespace MarkdownViewer
                         if (!File.Exists(path)) continue;
                         // 后台读取，避免会话多标签时阻塞窗口显示
                         var read = await Task.Run(() => FileReaderHelper.ReadMarkdownFileEx(path));
-                        tab = CreateTabDoc(path, read.Text, read.Encoding, read.Guessed);
+                        tab = CreateTabDoc(path, read.Text, read.Encoding, read.Guessed, read.CodePage);
                         if (s.Dirty)
                         {
                             tab.EditText = s.Text ?? read.Text;
                             tab.IsDirty = true;
                             if (Enum.TryParse<MdEncoding>(s.Encoding, out var savedEnc))
+                            {
                                 tab.Encoding = savedEnc;
+                                tab.EncodingCodePage = s.CodePage;
+                            }
                         }
                     }
                     else
@@ -567,6 +571,11 @@ namespace MarkdownViewer
                         {
                             tab.EditText = s.Text ?? "";
                             tab.IsDirty = true;
+                        }
+                        if (Enum.TryParse<MdEncoding>(s.Encoding, out var untitledEnc))
+                        {
+                            tab.Encoding = untitledEnc;
+                            tab.EncodingCodePage = s.CodePage;
                         }
                     }
                     tab.ScrollY = s.PreviewScroll;
@@ -648,7 +657,7 @@ namespace MarkdownViewer
                 {
                     var text = tab.EditText ?? tab.MarkdownText;
                     _watcherSuppress++;
-                    FileReaderHelper.WriteMarkdownFile(tab.FilePath, text, tab.Encoding);
+                    FileReaderHelper.WriteMarkdownFile(tab.FilePath, text, tab.Encoding, tab.EncodingCodePage);
                     _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
                     tab.MarkdownText = text;
                     tab.EditText = null;
@@ -788,6 +797,8 @@ namespace MarkdownViewer
                 var read = FileReaderHelper.ReadMarkdownFileEx(tab.FilePath);
                 tab.MarkdownText = read.Text;
                 tab.Encoding = read.Encoding;
+                tab.EncodingCodePage = read.CodePage;
+                tab.EncodingGuessed = read.Guessed;
                 tab.EditText = null;
                 tab.IsDirty = false;
                 _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
@@ -834,7 +845,8 @@ namespace MarkdownViewer
         }
 
         /// <summary>按色板创建带颜色的标签文档。</summary>
-        private static TabDoc CreateTabDoc(string filePath, string text, MdEncoding encoding, bool encodingGuessed = false)
+        private static TabDoc CreateTabDoc(string filePath, string text, MdEncoding encoding,
+            bool encodingGuessed = false, int encodingCodePage = 0)
         {
             var ci = System.Threading.Interlocked.Increment(ref _colorCounter) - 1;
             var idx = ((ci % Palette.Length) + Palette.Length) % Palette.Length;
@@ -846,6 +858,7 @@ namespace MarkdownViewer
                 FilePath = filePath,
                 MarkdownText = text,
                 Encoding = encoding,
+                EncodingCodePage = encodingCodePage,
                 EncodingGuessed = encodingGuessed,
                 ColorIndex = idx,
                 TabBrush = Frozen(main),
@@ -918,7 +931,7 @@ namespace MarkdownViewer
                     return raced;
                 }
 
-                var tab = CreateTabDoc(full, read.Text, read.Encoding, read.Guessed);
+                var tab = CreateTabDoc(full, read.Text, read.Encoding, read.Guessed, read.CodePage);
                 _tabs.Add(tab);
                 Tabs.SelectedItem = tab;
                 _settings.AddRecent(full);
@@ -972,7 +985,7 @@ namespace MarkdownViewer
             }
 
             RefreshWindowTitle();
-            var encName = FileReaderHelper.Name(tab.Encoding);
+            var encName = FileReaderHelper.Name(tab.Encoding, tab.EncodingCodePage);
             StatusText.Text = string.IsNullOrEmpty(tab.FilePath)
                 ? $"{tab.BaseTitle}（尚未保存） · {encName}"
                 : $"{tab.FilePath} · {encName}";
@@ -1144,7 +1157,7 @@ namespace MarkdownViewer
         {
             if (!tab.EncodingGuessed) return true;
             var r = MessageBox.Show(
-                $"「{tab.DisplayName}」的编码是自动推测的（{FileReaderHelper.Name(tab.Encoding)}）。\n\n" +
+                $"「{tab.DisplayName}」的编码是自动推测的（{FileReaderHelper.Name(tab.Encoding, tab.EncodingCodePage)}）。\n\n" +
                 "直接保存可能改变原文件编码，导致其它程序打开乱码。\n" +
                 "是：按推测编码保存；否：取消，先用「编码」菜单确认正确编码。",
                 "保存编码确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -1165,7 +1178,7 @@ namespace MarkdownViewer
             try
             {
                 var text = tab.EditText ?? tab.MarkdownText;
-                FileReaderHelper.WriteMarkdownFile(tab.FilePath, text, tab.Encoding);
+                FileReaderHelper.WriteMarkdownFile(tab.FilePath, text, tab.Encoding, tab.EncodingCodePage);
                 tab.MarkdownText = text;
                 tab.EditText = null;
                 tab.IsDirty = false;
@@ -1175,7 +1188,7 @@ namespace MarkdownViewer
                 RebuildRecentMenu();
                 WebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(
                     new { type = "saved", tabId = tab.Id.ToString(), text }));
-                StatusText.Text = $"已保存：{tab.FilePath} · {FileReaderHelper.Name(tab.Encoding)}";
+                StatusText.Text = $"已保存：{tab.FilePath} · {FileReaderHelper.Name(tab.Encoding, tab.EncodingCodePage)}";
                 if (ReferenceEquals(tab, CurrentTab)) RefreshWindowTitle();
                 return true;
             }
@@ -1204,7 +1217,7 @@ namespace MarkdownViewer
             {
                 var newPath = Path.GetFullPath(dlg.FileName);
                 var text = tab.EditText ?? tab.MarkdownText;
-                FileReaderHelper.WriteMarkdownFile(newPath, text, tab.Encoding);
+                FileReaderHelper.WriteMarkdownFile(newPath, text, tab.Encoding, tab.EncodingCodePage);
                 tab.FilePath = newPath;
                 tab.MarkdownText = text;
                 tab.EditText = null;
@@ -2003,7 +2016,7 @@ namespace MarkdownViewer
         private void ReloadWithEncoding_Click(object sender, RoutedEventArgs e)
         {
             // 「以当前编码重新读取」：按标签当前编码重新解码磁盘文件
-            if (CurrentTab != null) ApplyEncoding(CurrentTab.Encoding);
+            if (CurrentTab != null) ApplyEncoding(CurrentTab.Encoding, CurrentTab.EncodingCodePage);
         }
 
         /// <summary>只设置“保存时使用的编码”，不立即重读文件（避免误丢编辑内容）。</summary>
@@ -2012,12 +2025,13 @@ namespace MarkdownViewer
             var tab = CurrentTab;
             if (tab == null) return;
             tab.Encoding = enc;
+            tab.EncodingCodePage = 0;
             tab.EncodingGuessed = false;
             StatusText.Text = $"保存编码已设为 {FileReaderHelper.Name(enc)}；如需重新解码请用「以当前编码重新读取」";
         }
 
         /// <summary>按指定编码重新解码当前文件（用于修正乱码或切换写回编码）。</summary>
-        private void ApplyEncoding(MdEncoding enc)
+        private void ApplyEncoding(MdEncoding enc, int codePage = 0)
         {
             var tab = CurrentTab;
             if (tab == null) return;
@@ -2025,7 +2039,8 @@ namespace MarkdownViewer
             if (string.IsNullOrEmpty(tab.FilePath))
             {
                 tab.Encoding = enc;
-                StatusText.Text = $"后续保存将使用 {FileReaderHelper.Name(enc)}";
+                tab.EncodingCodePage = codePage;
+                StatusText.Text = $"后续保存将使用 {FileReaderHelper.Name(enc, codePage)}";
                 return;
             }
 
@@ -2040,15 +2055,16 @@ namespace MarkdownViewer
             try
             {
                 var bytes = File.ReadAllBytes(tab.FilePath);
-                tab.MarkdownText = FileReaderHelper.DecodeWith(enc, bytes);
+                tab.MarkdownText = FileReaderHelper.DecodeWith(enc, bytes, codePage);
                 tab.Encoding = enc;
+                tab.EncodingCodePage = codePage;
                 tab.EncodingGuessed = false;
                 tab.EditText = null;
                 tab.IsDirty = false;
                 _lastKnownWriteUtc = SafeLastWrite(tab.FilePath);
                 if (_webReady) PushMarkdown(tab, reset: true);
                 RefreshWindowTitle();
-                StatusText.Text = $"已按 {FileReaderHelper.Name(enc)} 重新读取：{tab.FilePath}";
+                StatusText.Text = $"已按 {FileReaderHelper.Name(enc, codePage)} 重新读取：{tab.FilePath}";
             }
             catch (Exception ex)
             {
@@ -2523,6 +2539,7 @@ namespace MarkdownViewer
                 var read = FileReaderHelper.ReadMarkdownFileEx(tab.FilePath);
                 tab.MarkdownText = read.Text;
                 tab.Encoding = read.Encoding;
+                tab.EncodingCodePage = read.CodePage;
                 tab.EncodingGuessed = read.Guessed;
                 tab.EditText = null;
                 tab.IsDirty = false;
@@ -2612,6 +2629,9 @@ namespace MarkdownViewer
 
         /// <summary>文件原始编码，保存时按此编码写回。</summary>
         public MdEncoding Encoding { get; set; } = MdEncoding.Utf8NoBom;
+
+        /// <summary>Encoding == Other 时的实际代码页。</summary>
+        public int EncodingCodePage { get; set; }
 
         /// <summary>编码是否为自动推测（保存前需要用户确认，自动保存会跳过）。</summary>
         public bool EncodingGuessed { get; set; }

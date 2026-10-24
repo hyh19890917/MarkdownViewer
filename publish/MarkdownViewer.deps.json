@@ -7,9 +7,10 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "MarkdownViewer/1.1.1": {
+      "MarkdownViewer/1.2.0": {
         "dependencies": {
           "Microsoft.Web.WebView2": "1.0.4258.31",
+          "UTF.Unknown": "2.8.0",
           "Microsoft.Web.WebView2.Core": "1.0.4258.31",
           "Microsoft.Web.WebView2.WinForms": "1.0.4258.31",
           "Microsoft.Web.WebView2.Wpf": "1.0.4258.31"
@@ -22,6 +23,14 @@
         "native": {
           "runtimes/win-x64/native/WebView2Loader.dll": {
             "fileVersion": "1.0.4258.31"
+          }
+        }
+      },
+      "UTF.Unknown/2.8.0": {
+        "runtime": {
+          "lib/net8.0/UtfUnknown.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.1.135.0"
           }
         }
       },
@@ -52,7 +61,7 @@
     }
   },
   "libraries": {
-    "MarkdownViewer/1.1.1": {
+    "MarkdownViewer/1.2.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
@@ -63,6 +72,13 @@
       "sha512": "sha512-sHVZ2MQrHT1J3q5/6csn0fIP27rzpTO/RRC+wPQDrZheB7T4t2n+vVbY6SdCKr4WRV9s/gmBM3PPMWWJtoDzMg==",
       "path": "microsoft.web.webview2/1.0.4258.31",
       "hashPath": "microsoft.web.webview2.1.0.4258.31.nupkg.sha512"
+    },
+    "UTF.Unknown/2.8.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bpDbg9Hjuenm/vMhxavOb/cLivRBQxhU4Dc6iRPPoEUM80qlAnRQ7c2niLQJPxLV/XBEGGhda5cNLkcQuHxULA==",
+      "path": "utf.unknown/2.8.0",
+      "hashPath": "utf.unknown.2.8.0.nupkg.sha512"
     },
     "Microsoft.Web.WebView2.Core/1.0.4258.31": {
       "type": "reference",
