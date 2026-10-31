@@ -261,7 +261,7 @@
                 "language-" + escapeHtml(result.lang);
             // 必须以 <pre 开头，markdown-it 才会原样使用（不再包一层 pre/code）
             return '<pre class="code-block"><button type="button" class="copy-code" data-code="' +
-                idx + '" title="复制代码">复制</button><code class="' + codeClass + '">' +
+                idx + '" title="复制代码" aria-label="复制代码">复制</button><code class="' + codeClass + '">' +
                 result.html + "</code></pre>";
         }
     });
@@ -357,6 +357,8 @@
         };
     md.renderer.rules.image = function (tokens, idx, options, env, self) {
         var token = tokens[idx];
+        token.attrSet("loading", "lazy");
+        token.attrSet("decoding", "async");
         var srcIndex = token.attrIndex("src");
         if (srcIndex >= 0) {
             var src = token.attrs[srcIndex][1] || "";
@@ -4117,6 +4119,15 @@
                         '</span><span class="ui-structure-label">' +
                         escapeHtml(el.text || UI_TYPE_LABELS[el.type]) + "</span>";
                     row.title = UI_TYPE_LABELS[el.type] + " · " + el.id;
+                    row.tabIndex = 0;
+                    row.setAttribute("role", "button");
+                    row.addEventListener("keydown", function (e) {
+                        if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            uiSelectElement(el.id);
+                            uiRenderStructure();
+                        }
+                    });
                     row.addEventListener("click", function () {
                         uiSelectElement(el.id);
                         uiRenderStructure();
@@ -4154,6 +4165,16 @@
         node.setAttribute("data-id", el.id);
         node.setAttribute("data-type", el.type);
         node.setAttribute("data-parent-id", el.parentId || "");
+        node.tabIndex = 0;
+        node.setAttribute("role", "button");
+        node.setAttribute("aria-label", UI_TYPE_LABELS[el.type] + "：" + (el.text || "未命名"));
+        node.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                uiSelectElement(el.id);
+                uiCanvas.focus();
+            }
+        });
         node.style.left = el.x + "px";
         node.style.top = el.y + "px";
         node.style.width = el.w + "px";
@@ -5777,6 +5798,11 @@
         replaceOneBtn.style.display = display;
         replaceAllBtn.style.display = display;
         findSep.style.display = display;
+        document.getElementById("find-next").disabled = false;
+        document.getElementById("find-prev").disabled = false;
+        replaceOneBtn.disabled = false;
+        replaceAllBtn.disabled = false;
+        findCount.classList.remove("no-match");
         findInput.focus();
         findInput.select();
         if (findInput.value) runFind(findInput.value, true);
@@ -5788,6 +5814,7 @@
         findState.matches = [];
         findState.index = -1;
         findCount.textContent = "0/0";
+        findCount.classList.remove("no-match");
         clearEditorMarks();
         clearPreviewMarks();
         if (viewMode !== "preview") cm.focus();
@@ -5894,6 +5921,17 @@
     function updateFindCount() {
         var total = findState.matches.length;
         var suffix = total >= MAX_FIND ? "+" : "";
+        var has = total > 0;
+        document.getElementById("find-next").disabled = !has;
+        document.getElementById("find-prev").disabled = !has;
+        replaceOneBtn.disabled = !has;
+        replaceAllBtn.disabled = !has;
+        if (findState.term && !total) {
+            findCount.textContent = "无结果";
+            findCount.classList.add("no-match");
+            return;
+        }
+        findCount.classList.remove("no-match");
         findCount.textContent = total
             ? (findState.index + 1) + "/" + total + suffix
             : "0/0";

@@ -65,6 +65,7 @@ body.theme-light, body.theme-green { color-scheme: light; }
 }
 
 .find-bar button:hover { background: #eaeef2; }
+.find-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
 .find-count { min-width: 52px; text-align: center; color: #57606a; }
 .find-sep { width: 1px; height: 18px; background: #d0d7de; }
 
@@ -1881,3 +1882,63 @@ body.theme-green .ui-runtime { background: linear-gradient(135deg, #e7f6e8, #f4f
 body.theme-green .ui-rt-window,
 body.theme-green .ui-rt-window-body { background: #ffffff; border-color: #93c59c; }
 body.theme-green .ui-rt-window-head { background: #d6efd8; }
+
+/* ===================== 交互细节：焦点 / 过渡 / 动画 ===================== */
+.find-count.no-match { color: #cf222e; font-weight: 600; }
+body.theme-dark .find-count.no-match { color: #f48771; }
+body.theme-green .find-count.no-match { color: #a33a3a; }
+
+/* 可点击控件统一过渡 */
+.ui-page-tab,
+.ui-page-bar > button,
+.ui-palette button,
+.ui-canvas-el,
+.ui-structure-item,
+.ui-logic-chip,
+.ui-rt-button,
+.ui-edit-btn,
+.ui-reset-btn,
+.copy-code,
+.mermaid-edit-btn,
+.table-edit-btn {
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
+}
+
+.ui-rt-button:active,
+.ui-page-tab:active,
+.ui-page-bar > button:active,
+.ui-palette button:active,
+.ui-edit-btn:active,
+.ui-reset-btn:active,
+.copy-code:active {
+    transform: scale(0.96);
+}
+
+/* UI 原型：画布元素与结构树键盘可达 */
+.ui-canvas-el:focus-visible {
+    outline: 2px solid #0969da;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.2);
+}
+.ui-structure-item:focus-visible { outline: 2px solid #0969da; outline-offset: -2px; }
+body.theme-dark .ui-canvas-el:focus-visible,
+body.theme-dark .ui-structure-item:focus-visible { outline-color: #4daafc; }
+
+/* 窗口弹出与提示条动画 */
+@keyframes ui-rt-pop {
+    from { opacity: 0; transform: scale(0.96) translateY(6px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.ui-rt-window { animation: ui-rt-pop 0.16s ease; }
+
+@keyframes ui-rt-toast-in {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+}
+.ui-rt-toast { animation: ui-rt-toast-in 0.18s ease; }
+
+/* 灯箱淡入 */
+@keyframes lightbox-fade { from { opacity: 0; } to { opacity: 1; } }
+.lightbox { animation: lightbox-fade 0.16s ease; }
+.lightbox img { transition: transform 0.16s ease; }
+.lightbox img:hover { transform: scale(1.02); }
