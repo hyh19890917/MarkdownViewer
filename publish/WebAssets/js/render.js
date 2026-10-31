@@ -2894,7 +2894,7 @@
                 context.lineWidth = 0.8;
                 context.stroke();
             });
-            status.textContent = text + " · " + model.faces.length + " 面";
+            status.textContent = (text ? text + " · " : "") + model.faces.length + " 面";
         }
 
         function load() {
@@ -2971,7 +2971,7 @@
         node.style.width = el.w + "px";
         node.style.height = el.h + "px";
         node.style.zIndex = String(10 + depth * 10 + page.elements.indexOf(el));
-        var text = ctx.texts[el.id] != null ? ctx.texts[el.id] : (el.text || UI_TYPE_LABELS[el.type]);
+        var text = ctx.texts[el.id] != null ? ctx.texts[el.id] : (el.text || "");
         var props = el.props || {};
         var run = function (eventName) { uiRuntimeRunEvent(ctx, page, el, eventName || "click"); };
 
@@ -3052,7 +3052,7 @@
         }
 
         if (el.type === "button") {
-            var button = uiRuntimeButton(text || "按钮", "ui-rt-button " + (props.variant || "primary"), function () {
+            var button = uiRuntimeButton(text, "ui-rt-button " + (props.variant || "primary"), function () {
                 var hasClick = ctx.doc.connections.some(function (conn) {
                     return conn.from === el.id && conn.event === "click";
                 });
@@ -4186,7 +4186,8 @@
         node.appendChild(icon);
         var label = document.createElement("div");
         label.className = "ui-canvas-label";
-        label.textContent = el.text || UI_TYPE_LABELS[el.type];
+        label.textContent = el.text || "";
+        label.style.display = el.text ? "" : "none";
         node.appendChild(label);
         if (childCount) {
             var childBadge = document.createElement("span");
@@ -4474,7 +4475,10 @@
         var node = uiCanvasNode(el.id);
         if (!node) return;
         var label = node.querySelector(".ui-canvas-label");
-        if (label) label.textContent = el.text || UI_TYPE_LABELS[el.type];
+        if (label) {
+            label.textContent = el.text || "";
+            label.style.display = el.text ? "" : "none";
+        }
         var note = node.querySelector(".ui-canvas-note");
         if (el.props && el.props.note) {
             if (!note) {

@@ -4,7 +4,7 @@
 
 一个独立、轻量的 Markdown 阅读与编辑器，带目录（TOC）、分栏实时预览，以及浅色 / 护眼绿 / 暗黑三套主题。
 
-> **当前版本**：1.6.1 ｜ **发布日期**：2026-10-31 ｜ **作者**：tobegmup
+> **当前版本**：1.6.2 ｜ **发布日期**：2026-10-31 ｜ **作者**：tobegmup
 >
 > **开源协议**：本项目以 [GNU GPL v3](LICENSE) 发布。第三方组件（markdown-it、CodeMirror、WebView2 等）版权声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
@@ -13,7 +13,7 @@
 | 方式 | 做法 | 说明 |
 |------|------|------|
 | **绿色版**（免安装） | 下载仓库中的 `publish/` 文件夹，**整个文件夹**拷贝到任意目录，双击 `MarkdownViewer.exe` | 不写注册表、不建快捷方式、不关联文件类型；删文件夹即卸载。需 .NET 8 Desktop Runtime |
-| **安装包** | `Setup/MarkdownViewer-Setup-1.6.1.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
+| **安装包** | `Setup/MarkdownViewer-Setup-1.6.2.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
 
 详见下文「[绿色版](#绿色版免安装直接拷贝使用)」与「[安装包](#安装包安装器--payloadzip)」。
 
@@ -189,7 +189,7 @@ markdownviewer/
 │   ├── MarkdownViewer.exe           # 双击直接运行
 │   └── WebAssets/ runtimes/ ...     # 需与 exe 保持同级目录结构
 ├── Setup/
-│   ├── MarkdownViewer-Setup-1.6.1.exe   # 安装器（自包含 .NET 运行时，<100MB）
+│   ├── MarkdownViewer-Setup-1.6.2.exe   # 安装器（自包含 .NET 运行时，<100MB）
 │   └── payload.zip                      # 主程序载荷，安装时复制到安装目录
 ├── LICENSE                          # GNU GPL v3 许可证
 ├── THIRD-PARTY-NOTICES.md           # 第三方组件版权声明
@@ -228,7 +228,7 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 
 安装包由**两个文件**组成，必须放在同一目录：
 
-- `Setup\MarkdownViewer-Setup-1.6.1.exe`：安装器（自包含 .NET 运行时，约 70MB）
+- `Setup\MarkdownViewer-Setup-1.6.2.exe`：安装器（自包含 .NET 运行时，约 70MB）
 - `Setup\payload.zip`：主程序载荷（约 66MB）
 
 > 安装器不再把载荷内嵌到自身，避免单文件超过 GitHub 100MB 限制。安装时从安装器所在目录读取 `payload.zip` 并解压到用户选择的安装目录；如果缺少该文件，安装器会提示两者需放在同一目录。
@@ -240,8 +240,8 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 - 写入「设置 → 应用 → 已安装的应用」卸载条目，支持完整卸载（含文件、快捷方式、关联清理）；卸载路径从注册表读取，自定义目录也能正确清理
 - 覆盖安装时若旧版本位于其他目录，会自动迁移 `userdata` 并清理旧目录
 - **升级安全**：先把 `payload.zip` 解压到临时目录并校验主程序存在，确认无误后才清理旧版本；解压/复制失败不会先把旧安装删一半；升级保留 `userdata`（设置、会话、草稿），卸载时才清理
-- 静默安装/卸载：`MarkdownViewer-Setup-1.6.1.exe /silent`、`Uninstall.exe /uninstall /silent`
-- 指定目录静默安装：`MarkdownViewer-Setup-1.6.1.exe /silent /DIR="D:\Apps\MarkdownViewer"`
+- 静默安装/卸载：`MarkdownViewer-Setup-1.6.2.exe /silent`、`Uninstall.exe /uninstall /silent`
+- 指定目录静默安装：`MarkdownViewer-Setup-1.6.2.exe /silent /DIR="D:\Apps\MarkdownViewer"`
 
 ### 重新构建安装包
 
@@ -256,7 +256,7 @@ Compress-Archive -Path build-payload\* -DestinationPath Installer\payload.zip -F
 dotnet publish Installer\Installer.csproj -c Release -r win-x64 `
   --self-contained true -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true -o build-setup
-Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.6.1.exe -Force
+Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.6.2.exe -Force
 Copy-Item Installer\payload.zip Setup\payload.zip -Force
 ```
 
