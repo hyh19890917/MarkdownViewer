@@ -37,6 +37,8 @@
     var tableEditorSize = document.getElementById("table-editor-size");
     var tableEditorHint = document.getElementById("table-editor-hint");
     var tableGrid = document.getElementById("table-editor-grid");
+    var mermaidEditorBox = mermaidEditor ? mermaidEditor.querySelector(".mermaid-editor-box") : null;
+    var tableEditorBox = tableEditor ? tableEditor.querySelector(".mermaid-editor-box") : null;
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -406,6 +408,8 @@
     var tableData = [];
     var tableAligns = [];
     var tableFocus = { r: 1, c: 0 };
+    var dialogRects = Object.create(null);
+    var dialogClickSuppressUntil = 0;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -679,6 +683,8 @@
             // 把自动布局后的位置写回源码，重新打开时保持相同布局
             syncFlowSource();
         }
+
+        layoutFloatingDialog(mermaidEditor, mermaidEditorBox);
 
         setTimeout(function () {
             if (mermaidTab === "source") {
@@ -1548,6 +1554,7 @@
             }
         });
         mermaidEditor.addEventListener("click", function (e) {
+            if (Date.now() < dialogClickSuppressUntil) return;
             if (e.target === mermaidEditor) closeMermaidEditor();
         });
     }
@@ -1858,6 +1865,7 @@
         tableEditor.hidden = false;
         tableFocus = { r: tableData.length > 1 ? 1 : 0, c: 0 };
         renderTableEditorGrid(tableFocus);
+        layoutFloatingDialog(tableEditor, tableEditorBox);
         setTimeout(function () {
             focusTableCell(tableFocus.r, tableFocus.c);
         }, 30);
@@ -2012,9 +2020,209 @@
         });
 
         tableEditor.addEventListener("click", function (e) {
+            if (Date.now() < dialogClickSuppressUntil) return;
             if (e.target === tableEditor) closeTableEditor();
         });
     }
+
+    /* ===================== 弹窗拖动 / 缩放 ===================== */
+    function dialogMinSize(box) {
+        return {
+            width: parseInt(box.getAttribute("data-min-width"), 10) || 520,
+            height: parseInt(box.getAttribute("data-min-height"), 10) || 320
+        };
+    }
+
+    function getDialogRect(modal, box) {
+        var mr = modal.getBoundingClientRect();
+        var br = box.getBoundingClientRect();
+        return {
+            left: br.left - mr.left,
+            top: br.top - mr.top,
+            width: br.width,
+            height: br.height
+        };
+    }
+
+    function clampDialogRect(modal, rect, minW, minH) {
+        var vw = modal.clientWidth || window.innerWidth;
+        var vh = modal.clientHeight || window.innerHeight;
+        var margin = 8;
+        var maxW = Math.max(240, vw - margin * 2);
+        var maxH = Math.max(180, vh - margin * 2);
+        var w = Math.min(maxW, Math.max(Math.min(minW, maxW), rect.width || 0));
+        var h = Math.min(maxH, Math.max(Math.min(minH, maxH), rect.height || 0));
+        var left = Math.max(margin, Math.min(rect.left || 0, vw - w - margin));
+        var top = Math.max(margin, Math.min(rect.top || 0, vh - h - margin));
+        return { left: left, top: top, width: w, height: h };
+    }
+
+    function applyDialogRect(box, rect) {
+        var key = box.getAttribute("data-dialog-key") || "dialog";
+        box.style.position = "absolute";
+        box.style.boxSizing = "border-box";
+        box.style.left = Math.round(rect.left) + "px";
+        box.style.top = Math.round(rect.top) + "px";
+        box.style.width = Math.round(rect.width) + "px";
+        box.style.height = Math.round(rect.height) + "px";
+        box.style.maxWidth = "none";
+        box.style.maxHeight = "none";
+        box.style.margin = "0";
+        box.style.transform = "none";
+        dialogRects[key] = {
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+        };
+    }
+
+    function measureDialogRect(modal, box, minW, minH) {
+        box.style.position = "absolute";
+        box.style.left = "0px";
+        box.style.top = "0px";
+        box.style.width = "";
+        box.style.height = "";
+        box.style.maxWidth = "none";
+        box.style.maxHeight = "none";
+        box.style.transform = "none";
+        var br = box.getBoundingClientRect();
+        var vw = modal.clientWidth || window.innerWidth;
+        var vh = modal.clientHeight || window.innerHeight;
+        var maxW = Math.max(240, vw - 16);
+        var maxH = Math.max(180, vh - 16);
+        var w = Math.min(maxW, Math.max(minW, br.width || minW));
+        var h = Math.min(maxH, Math.max(minH, br.height || minH));
+        return { left: (vw - w) / 2, top: (vh - h) / 2, width: w, height: h };
+    }
+
+    function layoutFloatingDialog(modal, box) {
+        if (!modal || !box || modal.hidden) return;
+        var min = dialogMinSize(box);
+        var key = box.getAttribute("data-dialog-key") || "dialog";
+        var rect = dialogRects[key];
+        if (!rect) rect = measureDialogRect(modal, box, min.width, min.height);
+        rect = clampDialogRect(modal, rect, min.width, min.height);
+        applyDialogRect(box, rect);
+    }
+
+    function dialogResizeCursor(dir) {
+        var map = {
+            n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize",
+            ne: "nesw-resize", sw: "nesw-resize", nw: "nwse-resize", se: "nwse-resize"
+        };
+        return map[dir] || "default";
+    }
+
+    function startDialogPointer(modal, box, e, dir) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var min = dialogMinSize(box);
+        var vw = modal.clientWidth || window.innerWidth;
+        var vh = modal.clientHeight || window.innerHeight;
+        var minW = Math.min(min.width, Math.max(240, vw - 16));
+        var minH = Math.min(min.height, Math.max(180, vh - 16));
+        var start = getDialogRect(modal, box);
+        var startX = e.clientX;
+        var startY = e.clientY;
+        var margin = 8;
+        var oldCursor = document.body.style.cursor;
+        document.body.classList.add("dialog-dragging");
+        document.body.style.cursor = dir ? dialogResizeCursor(dir) : "grabbing";
+
+        function onMove(ev) {
+            var dx = ev.clientX - startX;
+            var dy = ev.clientY - startY;
+            var left = start.left;
+            var top = start.top;
+            var right = start.left + start.width;
+            var bottom = start.top + start.height;
+            if (dir) {
+                if (dir.indexOf("e") >= 0)
+                    right = Math.min(vw - margin, Math.max(left + minW, right + dx));
+                if (dir.indexOf("w") >= 0)
+                    left = Math.min(right - minW, Math.max(margin, left + dx));
+                if (dir.indexOf("s") >= 0)
+                    bottom = Math.min(vh - margin, Math.max(top + minH, bottom + dy));
+                if (dir.indexOf("n") >= 0)
+                    top = Math.min(bottom - minH, Math.max(margin, top + dy));
+            } else {
+                left += dx;
+                top += dy;
+            }
+            var next = dir
+                ? { left: left, top: top, width: right - left, height: bottom - top }
+                : { left: left, top: top, width: start.width, height: start.height };
+            applyDialogRect(box, clampDialogRect(modal, next, minW, minH));
+        }
+
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.removeEventListener("pointercancel", onUp);
+            document.body.classList.remove("dialog-dragging");
+            document.body.style.cursor = oldCursor;
+            dialogClickSuppressUntil = Date.now() + 250;
+        }
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+    }
+
+    function addDialogResizeHandles(modal, box) {
+        if (!box || box.querySelector(".dialog-resize-handle")) return;
+        ["n", "s", "e", "w", "ne", "nw", "se", "sw"].forEach(function (dir) {
+            var handle = document.createElement("div");
+            handle.className = "dialog-resize-handle dialog-resize-" + dir +
+                (dir === "se" ? " dialog-resize-grip" : "");
+            handle.setAttribute("data-dir", dir);
+            handle.setAttribute("aria-hidden", "true");
+            handle.addEventListener("pointerdown", function (e) {
+                startDialogPointer(modal, box, e, dir);
+            });
+            box.appendChild(handle);
+        });
+    }
+
+    function setupFloatingDialog(modal, box, key, minW, minH) {
+        if (!modal || !box) return;
+        box.setAttribute("data-dialog-key", key);
+        box.setAttribute("data-min-width", String(minW));
+        box.setAttribute("data-min-height", String(minH));
+        addDialogResizeHandles(modal, box);
+
+        var head = box.querySelector(".mermaid-editor-head");
+        if (head) {
+            head.title = "拖动标题栏移动；拖动边缘缩放；双击标题重置大小";
+            head.addEventListener("pointerdown", function (e) {
+                if (e.button !== undefined && e.button !== 0) return;
+                var target = e.target;
+                if (target && target.closest &&
+                    target.closest("button, input, select, textarea, .mermaid-editor-tabs")) return;
+                startDialogPointer(modal, box, e, null);
+            });
+            head.addEventListener("dblclick", function (e) {
+                var target = e.target;
+                if (target && target.closest &&
+                    target.closest("button, input, select, textarea, .mermaid-editor-tabs")) return;
+                delete dialogRects[key];
+                layoutFloatingDialog(modal, box);
+            });
+        }
+
+        window.addEventListener("resize", function () {
+            if (modal.hidden) return;
+            var min = dialogMinSize(box);
+            var rect = dialogRects[key];
+            if (!rect) return;
+            applyDialogRect(box, clampDialogRect(modal, rect, min.width, min.height));
+        });
+    }
+
+    setupFloatingDialog(mermaidEditor, mermaidEditorBox, "mermaid", 640, 420);
+    setupFloatingDialog(tableEditor, tableEditorBox, "table", 520, 320);
 
     /* 双击图表直接打开源码编辑器 */
     document.getElementById("md-body").addEventListener("dblclick", function (e) {

@@ -263,6 +263,7 @@ body.theme-green .markdown-body .mermaid-error-hint { color: #a33a3a; }
     flex-direction: column;
     width: min(1040px, 94vw);
     height: min(760px, 88vh);
+    box-sizing: border-box;
     border: 1px solid #d0d7de;
     border-radius: 10px;
     overflow: hidden;
@@ -280,7 +281,38 @@ body.theme-green .markdown-body .mermaid-error-hint { color: #a33a3a; }
     font-size: 14px;
     font-weight: 600;
     background: #f6f8fa;
+    cursor: move;
+    user-select: none;
 }
+
+.mermaid-editor-head button,
+.mermaid-editor-head input,
+.mermaid-editor-head select,
+.mermaid-editor-tabs { cursor: pointer; }
+
+/* 弹窗边缘缩放手柄：标题栏可拖动，八向可缩放 */
+.dialog-resize-handle {
+    position: absolute;
+    z-index: 20;
+    touch-action: none;
+    background: transparent;
+}
+.dialog-resize-n { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.dialog-resize-s { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.dialog-resize-e { top: 12px; right: 0; bottom: 12px; width: 6px; cursor: ew-resize; }
+.dialog-resize-w { top: 12px; left: 0; bottom: 12px; width: 6px; cursor: ew-resize; }
+.dialog-resize-ne { top: 0; right: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.dialog-resize-nw { top: 0; left: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.dialog-resize-se { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.dialog-resize-sw { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.dialog-resize-grip {
+    background: linear-gradient(135deg, transparent 0 44%, #8c959f 44% 50%,
+                transparent 50% 62%, #8c959f 62% 68%, transparent 68%) !important;
+    opacity: 0.7;
+}
+body.theme-dark .dialog-resize-grip { background: linear-gradient(135deg, transparent 0 44%, #9da5b4 44% 50%, transparent 50% 62%, #9da5b4 62% 68%, transparent 68%) !important; }
+body.dialog-dragging,
+body.dialog-dragging * { user-select: none !important; }
 
 .mermaid-editor-head > span:first-child { white-space: nowrap; }
 
@@ -649,8 +681,7 @@ body.theme-dark .mermaid-editor-preview .mermaid-error { color: #f48771; }
 
 .table-editor-scroll {
     flex: 1 1 auto;
-    min-height: 120px;
-    max-height: min(560px, 68vh);
+    min-height: 0;
     overflow: auto;
     padding: 12px;
     background: #ffffff;
