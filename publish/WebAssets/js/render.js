@@ -32,6 +32,11 @@
     var mermaidShapeField = document.getElementById("mermaid-shape-field");
     var mermaidShapeSelect = document.getElementById("mermaid-shape-select");
     var mermaidDeleteSelection = document.getElementById("mermaid-delete-selection");
+    var tableEditor = document.getElementById("table-editor");
+    var tableEditorTitle = document.getElementById("table-editor-title");
+    var tableEditorSize = document.getElementById("table-editor-size");
+    var tableEditorHint = document.getElementById("table-editor-hint");
+    var tableGrid = document.getElementById("table-editor-grid");
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -221,6 +226,16 @@
         }
     });
 
+    /* 给 markdown-it 渲染出的表格加标记，避免把文档里的原始 HTML <table> 当成可编辑表格 */
+    var defaultTableOpenRender = md.renderer.rules.table_open ||
+        function (tokens, idx, options, env, self) {
+            return self.renderToken(tokens, idx, options);
+        };
+    md.renderer.rules.table_open = function (tokens, idx, options, env, self) {
+        tokens[idx].attrJoin("class", "md-table");
+        return defaultTableOpenRender(tokens, idx, options, env, self);
+    };
+
     /* KaTeX：行内 $...$ / 单行 $$...$$ 在解析阶段直接生成公式 HTML，避免下划线等被当作 Markdown 语法；
        跨行 $$ 块与 \(...\) / \[...\] 由渲染后的 auto-render 处理 */
     if (window.katex) {
@@ -386,6 +401,11 @@
     var flowDrag = null;
     var flowConnect = null;
     var flowTempPath = null;
+    var tableEditIndex = null;
+    var tableEditRange = null;
+    var tableData = [];
+    var tableAligns = [];
+    var tableFocus = { r: 1, c: 0 };
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -602,6 +622,35 @@
             } else if (!hasError && hint) {
                 hint.parentNode.removeChild(hint);
             }
+        }
+    }
+
+    /* 在每个表格右上角加“编辑”按钮；表格外包一层定位容器 */
+    function decorateTableNodes() {
+        var root = document.getElementById("md-body");
+        var tables = root.querySelectorAll("table.md-table");
+        var index = 0;
+        for (var i = 0; i < tables.length; i++) {
+            var table = tables[i];
+            if (table.parentNode !== root) continue; // 只处理顶层表格
+            var wrap = document.createElement("div");
+            wrap.className = "table-wrap";
+            wrap.setAttribute("data-table-index", String(index));
+            table.parentNode.insertBefore(wrap, table);
+            wrap.appendChild(table);
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "table-edit-btn";
+            btn.textContent = "编辑";
+            btn.title = "编辑表格内容";
+            btn.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var target = e.currentTarget.parentNode;
+                openTableEditor(parseInt(target.getAttribute("data-table-index"), 10));
+            });
+            wrap.appendChild(btn);
+            index++;
         }
     }
 
@@ -1503,9 +1552,479 @@
         });
     }
 
+    /* ===================== 表格可视化编辑 ===================== */
+    var TABLE_ALIGN_LABELS = { none: "默认", left: "左对齐", center: "居中", right: "右对齐" };
+
+    function tableClampInt(value, min, max, fallback) {
+        var n = parseInt(value, 10);
+        if (!isFinite(n)) n = fallback;
+        return Math.max(min, Math.min(max, n));
+    }
+
+    /* 按未转义的 | 拆分表格行；单元格内的 \| 还原为 | */
+    function tableSplitRow(line) {
+        var text = String(line == null ? "" : line).trim();
+        if (!text) return [];
+        if (text.charAt(0) === "|") text = text.slice(1);
+        if (text.slice(-1) === "|") {
+            var slashes = 0;
+            for (var i = text.length - 2; i >= 0 && text.charAt(i) === "\\"; i--) slashes++;
+            if (slashes % 2 === 0) text = text.slice(0, -1);
+        }
+        var cells = [];
+        var current = "";
+        var escaped = false;
+        for (var k = 0; k < text.length; k++) {
+            var ch = text.charAt(k);
+            if (escaped) {
+                if (ch !== "|") current += "\\";
+                current += ch;
+                escaped = false;
+            } else if (ch === "\\") {
+                escaped = true;
+            } else if (ch === "|") {
+                cells.push(current.trim());
+                current = "";
+            } else {
+                current += ch;
+            }
+        }
+        if (escaped) current += "\\";
+        cells.push(current.trim());
+        return cells;
+    }
+
+    function tableDelimiterAligns(line) {
+        if (String(line == null ? "" : line).indexOf("|") < 0) return null;
+        var cells = tableSplitRow(line);
+        if (!cells.length) return null;
+        var aligns = [];
+        for (var i = 0; i < cells.length; i++) {
+            var cell = cells[i].trim();
+            if (!/^:?-+:?$/.test(cell)) return null;
+            var left = cell.charAt(0) === ":";
+            var right = cell.slice(-1) === ":";
+            aligns.push(left && right ? "center" : right ? "right" : left ? "left" : "none");
+        }
+        return aligns;
+    }
+
+    /* 用 markdown-it 的 table token 行号定位顶层表格，避免把 blockquote/list 内的表格算进来 */
+    function findTopLevelTableBlocks(text) {
+        var src = String(text || "");
+        var lines = src.split(/\r?\n/);
+        var tokens;
+        try {
+            tokens = md.parse(src, {});
+        } catch (e) {
+            return [];
+        }
+        var depth = 0;
+        var blocks = [];
+        for (var i = 0; i < tokens.length; i++) {
+            var tok = tokens[i];
+            if (tok.type === "table_open") {
+                if (depth === 0 && tok.map && tok.map.length >= 2) {
+                    var start = tok.map[0];
+                    var end = tok.map[1] - 1;
+                    while (end > start + 1 && lines[end] && !lines[end].trim()) end--;
+                    if (start >= 0 && end >= start && end < lines.length) {
+                        var aligns = tableDelimiterAligns(lines[start + 1]);
+                        if (aligns) {
+                            var header = tableSplitRow(lines[start]);
+                            var body = [];
+                            for (var r = start + 2; r <= end; r++) {
+                                if (lines[r] && lines[r].trim()) body.push(tableSplitRow(lines[r]));
+                            }
+                            blocks.push({ start: start, end: end, header: header, aligns: aligns, body: body });
+                        }
+                    }
+                }
+            } else if (tok.type === "blockquote_open" || tok.type === "list_item_open") {
+                depth++;
+            } else if (tok.type === "blockquote_close" || tok.type === "list_item_close") {
+                if (depth > 0) depth--;
+            }
+        }
+        return blocks;
+    }
+
+    function tableColumnCount() {
+        return tableData.length ? tableData[0].length : 0;
+    }
+
+    function tablePadRow(row, count) {
+        var out = [];
+        for (var c = 0; c < count; c++) {
+            out.push(row && row[c] != null ? String(row[c]) : "");
+        }
+        return out;
+    }
+
+    function tableEmptyRow(count) {
+        var row = [];
+        for (var c = 0; c < count; c++) row.push("");
+        return row;
+    }
+
+    function tableAlignStyle(align) {
+        if (align === "left") return ' style="text-align:left"';
+        if (align === "center") return ' style="text-align:center"';
+        if (align === "right") return ' style="text-align:right"';
+        return "";
+    }
+
+    function tableAlignOptions(current) {
+        var values = ["none", "left", "center", "right"];
+        return values.map(function (value) {
+            return '<option value="' + value + '"' +
+                (value === current ? " selected" : "") + ">" +
+                TABLE_ALIGN_LABELS[value] + "</option>";
+        }).join("");
+    }
+
+    function tableAlignDelimiter(align) {
+        if (align === "left") return ":---";
+        if (align === "center") return ":---:";
+        if (align === "right") return "---:";
+        return "---";
+    }
+
+    function formatTableRow(cells) {
+        var out = [];
+        for (var i = 0; i < cells.length; i++) {
+            var cell = String(cells[i] == null ? "" : cells[i])
+                .replace(/\r?\n/g, " ")
+                .replace(/\|/g, "\\|")
+                .trim();
+            out.push(cell);
+        }
+        return "| " + out.join(" | ") + " |";
+    }
+
+    function serializeTableEditor() {
+        var cols = tableColumnCount();
+        var lines = [formatTableRow(tablePadRow(tableData[0], cols))];
+        var delimiters = [];
+        for (var c = 0; c < cols; c++) delimiters.push(tableAlignDelimiter(tableAligns[c] || "none"));
+        lines.push("| " + delimiters.join(" | ") + " |");
+        for (var r = 1; r < tableData.length; r++) {
+            lines.push(formatTableRow(tablePadRow(tableData[r], cols)));
+        }
+        return lines.join("\n");
+    }
+
+    function focusTableCell(row, col) {
+        var input = tableGrid.querySelector(
+            'input.tbl-cell[data-r="' + row + '"][data-c="' + col + '"]');
+        if (!input) input = tableGrid.querySelector("input.tbl-cell");
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    }
+
+    function renderTableEditorGrid(focus) {
+        if (!tableGrid) return;
+        var cols = tableColumnCount();
+        if (!cols) return;
+        var html = "<thead><tr><th class=\"tbl-corner\"></th>";
+        for (var c = 0; c < cols; c++) {
+            var align = tableAligns[c] || "none";
+            html += "<th class=\"tbl-col-head\" data-col=\"" + c + "\">" +
+                "<input class=\"tbl-cell tbl-header-input\" data-r=\"0\" data-c=\"" + c +
+                "\" type=\"text\" spellcheck=\"false\" autocomplete=\"off\" value=\"" +
+                escapeHtml(tableData[0][c] || "") + "\" placeholder=\"列 " + (c + 1) + "\"" +
+                tableAlignStyle(align) + ">" +
+                "<div class=\"tbl-col-tools\">" +
+                "<select class=\"tbl-align-select\" data-col=\"" + c + "\" title=\"列对齐\">" +
+                tableAlignOptions(align) + "</select>" +
+                (cols > 1
+                    ? "<button type=\"button\" class=\"tbl-col-del\" data-col=\"" + c +
+                      "\" title=\"删除此列\">×</button>"
+                    : "") +
+                "</div></th>";
+        }
+        html += "</tr></thead><tbody>";
+        for (var r = 1; r < tableData.length; r++) {
+            html += "<tr><th class=\"tbl-row-head\"><span>" + r + "</span>" +
+                "<button type=\"button\" class=\"tbl-row-del\" data-row=\"" + r +
+                "\" title=\"删除此行\">×</button></th>";
+            for (var c2 = 0; c2 < cols; c2++) {
+                html += "<td><input class=\"tbl-cell\" data-r=\"" + r + "\" data-c=\"" + c2 +
+                    "\" type=\"text\" spellcheck=\"false\" autocomplete=\"off\" value=\"" +
+                    escapeHtml(tableData[r][c2] || "") + "\"" +
+                    tableAlignStyle(tableAligns[c2] || "none") + "></td>";
+            }
+            html += "</tr>";
+        }
+        html += "</tbody>";
+        tableGrid.innerHTML = html;
+        tableEditorSize.textContent = tableData.length + " 行 × " + cols + " 列（含表头）";
+        if (focus) focusTableCell(focus.r, focus.c);
+    }
+
+    function syncTableStateFromGrid() {
+        var inputs = tableGrid.querySelectorAll("input.tbl-cell");
+        for (var i = 0; i < inputs.length; i++) {
+            var input = inputs[i];
+            var r = parseInt(input.getAttribute("data-r"), 10);
+            var c = parseInt(input.getAttribute("data-c"), 10);
+            if (tableData[r] && c >= 0) tableData[r][c] = input.value;
+        }
+    }
+
+    function tableCellInputs() {
+        return Array.prototype.slice.call(tableGrid.querySelectorAll("input.tbl-cell"));
+    }
+
+    function addTableRow(focusColumn) {
+        var cols = tableColumnCount();
+        if (!cols) return;
+        tableData.push(tableEmptyRow(cols));
+        var row = tableData.length - 1;
+        var col = typeof focusColumn === "number"
+            ? Math.max(0, Math.min(cols - 1, focusColumn))
+            : 0;
+        tableFocus = { r: row, c: col };
+        renderTableEditorGrid(tableFocus);
+    }
+
+    function addTableColumn() {
+        var cols = tableColumnCount();
+        if (!cols) return;
+        tableData[0].push("列 " + (cols + 1));
+        for (var r = 1; r < tableData.length; r++) tableData[r].push("");
+        tableAligns.push("none");
+        tableFocus = { r: tableData.length > 1 ? 1 : 0, c: cols };
+        renderTableEditorGrid(tableFocus);
+    }
+
+    function deleteTableRow(row) {
+        if (row < 1 || row >= tableData.length) return;
+        tableData.splice(row, 1);
+        var next = Math.min(row, tableData.length - 1);
+        tableFocus = { r: next, c: Math.min(tableFocus.c, tableColumnCount() - 1) };
+        renderTableEditorGrid(tableFocus);
+    }
+
+    function deleteTableColumn(col) {
+        if (tableColumnCount() <= 1) return;
+        for (var r = 0; r < tableData.length; r++) tableData[r].splice(col, 1);
+        tableAligns.splice(col, 1);
+        tableFocus = { r: Math.min(tableFocus.r, tableData.length - 1), c: Math.min(col, tableColumnCount() - 1) };
+        renderTableEditorGrid(tableFocus);
+    }
+
+    function openTableEditor(index, rows, cols) {
+        if (!tableEditor) return;
+        var parsed = (index === null || index === undefined || index === "") ? null : parseInt(index, 10);
+        if (parsed !== null && isNaN(parsed)) parsed = null;
+        tableEditIndex = parsed;
+        tableEditRange = null;
+
+        if (tableEditIndex === null) {
+            var rowCount = tableClampInt(rows, 2, 100, 3);
+            var colCount = tableClampInt(cols, 1, 20, 3);
+            tableData = [];
+            var header = [];
+            for (var c = 0; c < colCount; c++) header.push("列 " + (c + 1));
+            tableData.push(header);
+            for (var r = 1; r < rowCount; r++) tableData.push(tableEmptyRow(colCount));
+            tableAligns = [];
+            for (var a = 0; a < colCount; a++) tableAligns.push("none");
+            tableEditorTitle.textContent = "插入表格";
+            tableEditorHint.textContent = "单击单元格编辑；Tab 切换，Enter 下一行；Ctrl+Enter 应用 · Esc 取消";
+        } else {
+            var blocks = findTopLevelTableBlocks(cm.getValue());
+            var block = blocks[tableEditIndex];
+            if (!block) {
+                postMessage({ type: "status", text: "未找到对应的表格，可能已被外部修改" });
+                return;
+            }
+            tableEditRange = { start: block.start, end: block.end };
+            var count = Math.max(1, block.header.length, block.aligns.length);
+            block.body.forEach(function (row) {
+                if (row.length > count) count = row.length;
+            });
+            tableData = [tablePadRow(block.header, count)];
+            block.body.forEach(function (row) { tableData.push(tablePadRow(row, count)); });
+            tableAligns = [];
+            for (var c2 = 0; c2 < count; c2++) tableAligns.push(block.aligns[c2] || "none");
+            tableEditorTitle.textContent = "编辑表格";
+            tableEditorHint.textContent = "单击单元格编辑；首行为表头；Ctrl+Enter 应用 · Esc 取消";
+        }
+
+        tableEditor.hidden = false;
+        tableFocus = { r: tableData.length > 1 ? 1 : 0, c: 0 };
+        renderTableEditorGrid(tableFocus);
+        setTimeout(function () {
+            focusTableCell(tableFocus.r, tableFocus.c);
+        }, 30);
+    }
+
+    function closeTableEditor() {
+        if (!tableEditor) return;
+        tableEditor.hidden = true;
+        tableEditIndex = null;
+        tableEditRange = null;
+        tableData = [];
+        tableAligns = [];
+        tableFocus = null;
+        if (viewMode !== "preview") cm.focus();
+    }
+
+    function replaceTableEditorBlock(range, index, markdown) {
+        var text = cm.getValue();
+        var lines = text.split(/\r?\n/);
+        var use = null;
+        if (range && range.start >= 0 && range.end >= range.start &&
+            range.end < lines.length && tableDelimiterAligns(lines[range.start + 1])) {
+            use = range;
+        }
+        if (!use) {
+            var blocks = findTopLevelTableBlocks(text);
+            if (index !== null && blocks[index]) use = blocks[index];
+        }
+        if (!use) return false;
+        cm.replaceRange(markdown,
+            { line: use.start, ch: 0 },
+            { line: use.end, ch: lines[use.end].length });
+        return true;
+    }
+
+    function applyTableEditor() {
+        if (!tableEditor || tableEditor.hidden) return;
+        syncTableStateFromGrid();
+        if (!tableColumnCount()) {
+            tableEditorHint.textContent = "表格至少需要一列";
+            return;
+        }
+        var markdown = serializeTableEditor();
+        if (tableEditIndex === null) {
+            insertMarkdownBlockAtCursor(markdown);
+        } else if (!replaceTableEditorBlock(tableEditRange, tableEditIndex, markdown)) {
+            tableEditorHint.textContent = "未找到对应表格，可能已被外部修改";
+            postMessage({ type: "status", text: "未找到对应表格，可能已被外部修改" });
+            return;
+        }
+        closeTableEditor();
+    }
+
+    /* 在光标处插入块级 Markdown，并保证前后有空行，避免和段落粘在一起 */
+    function insertMarkdownBlockAtCursor(markdown) {
+        if (currentTabId == null) return;
+        var cur = cm.getCursor();
+        var before = "";
+        if (cur.ch > 0) {
+            before = "\n\n";
+        } else if (cur.line > 0 && cm.getLine(cur.line - 1).trim()) {
+            before = "\n";
+        }
+        insertTextAtCursor(before + markdown + "\n\n");
+    }
+
+    if (tableEditor) {
+        document.getElementById("table-editor-close").addEventListener("click", closeTableEditor);
+        document.getElementById("table-editor-cancel").addEventListener("click", closeTableEditor);
+        document.getElementById("table-editor-apply").addEventListener("click", applyTableEditor);
+        document.getElementById("table-add-row").addEventListener("click", function () { addTableRow(0); });
+        document.getElementById("table-add-col").addEventListener("click", addTableColumn);
+
+        tableGrid.addEventListener("input", function (e) {
+            var input = e.target;
+            if (!input || !input.classList || !input.classList.contains("tbl-cell")) return;
+            var r = parseInt(input.getAttribute("data-r"), 10);
+            var c = parseInt(input.getAttribute("data-c"), 10);
+            if (tableData[r] && c >= 0) tableData[r][c] = input.value;
+        });
+
+        tableGrid.addEventListener("focusin", function (e) {
+            var input = e.target;
+            if (!input || !input.classList || !input.classList.contains("tbl-cell")) return;
+            tableFocus = {
+                r: parseInt(input.getAttribute("data-r"), 10),
+                c: parseInt(input.getAttribute("data-c"), 10)
+            };
+        });
+
+        tableGrid.addEventListener("change", function (e) {
+            var select = e.target && e.target.closest ? e.target.closest(".tbl-align-select") : null;
+            if (!select) return;
+            var c = parseInt(select.getAttribute("data-col"), 10);
+            tableAligns[c] = select.value || "none";
+            renderTableEditorGrid(tableFocus);
+        });
+
+        tableGrid.addEventListener("click", function (e) {
+            var rowDel = e.target && e.target.closest ? e.target.closest(".tbl-row-del") : null;
+            if (rowDel) {
+                e.preventDefault();
+                deleteTableRow(parseInt(rowDel.getAttribute("data-row"), 10));
+                return;
+            }
+            var colDel = e.target && e.target.closest ? e.target.closest(".tbl-col-del") : null;
+            if (colDel) {
+                e.preventDefault();
+                deleteTableColumn(parseInt(colDel.getAttribute("data-col"), 10));
+            }
+        });
+
+        tableGrid.addEventListener("keydown", function (e) {
+            var input = e.target;
+            if (!input || !input.classList || !input.classList.contains("tbl-cell")) return;
+            if (e.key === "Tab") {
+                e.preventDefault();
+                var inputs = tableCellInputs();
+                var pos = inputs.indexOf(input);
+                var next = inputs[pos + (e.shiftKey ? -1 : 1)];
+                if (next) {
+                    next.focus();
+                    next.select();
+                } else if (!e.shiftKey) {
+                    addTableRow(0);
+                }
+            } else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                var r = parseInt(input.getAttribute("data-r"), 10);
+                var c = parseInt(input.getAttribute("data-c"), 10);
+                var below = tableGrid.querySelector(
+                    'input.tbl-cell[data-r="' + (r + 1) + '"][data-c="' + c + '"]');
+                if (below) {
+                    below.focus();
+                    below.select();
+                } else if (r === tableData.length - 1) {
+                    addTableRow(c);
+                }
+            }
+        });
+
+        tableEditor.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeTableEditor();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                applyTableEditor();
+            }
+        });
+
+        tableEditor.addEventListener("click", function (e) {
+            if (e.target === tableEditor) closeTableEditor();
+        });
+    }
+
     /* 双击图表直接打开源码编辑器 */
     document.getElementById("md-body").addEventListener("dblclick", function (e) {
         if (e.target && e.target.closest && e.target.closest(".mermaid-edit-btn")) return;
+        var tableWrap = e.target && e.target.closest ? e.target.closest(".table-wrap") : null;
+        if (tableWrap && !(e.target.closest && e.target.closest(".table-edit-btn"))) {
+            e.preventDefault();
+            openTableEditor(parseInt(tableWrap.getAttribute("data-table-index"), 10));
+            return;
+        }
         var node = e.target && e.target.closest ? e.target.closest(".mermaid") : null;
         if (!node) return;
         e.preventDefault();
@@ -1548,6 +2067,7 @@
 
         var html = md.renderer.render(tokens, md.options, {});
         document.getElementById("md-body").innerHTML = html;
+        decorateTableNodes();
 
         // 公式静态渲染；Mermaid 图异步渲染（避免每次输入都同步阻塞）
         renderMathInPreview();
@@ -1681,7 +2201,11 @@
         ]).then(function (parts) {
             var body = document.getElementById("md-body").cloneNode(true);
             body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
-            body.querySelectorAll(".mermaid-edit-btn").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".mermaid-edit-btn, .table-edit-btn").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".table-wrap").forEach(function (wrap) {
+                while (wrap.firstChild) wrap.parentNode.insertBefore(wrap.firstChild, wrap);
+                wrap.parentNode.removeChild(wrap);
+            });
             body.querySelectorAll("mark.find-hit").forEach(function (m) {
                 m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
             });
@@ -2629,6 +3153,8 @@
             setView(data.mode);
         } else if (data.type === "mermaidEditor") {
             openMermaidEditor(null, data.source || null);
+        } else if (data.type === "tableEditor") {
+            openTableEditor(null, data.rows, data.cols);
         } else if (data.type === "saved") {
             // 保存成功：以“实际写入磁盘的文本”作为新基线；保存期间新增的编辑仍保持未保存状态
             var sb = buffers[data.tabId];
@@ -2691,6 +3217,7 @@
     // Ctrl+W 关闭当前标签；Ctrl+Tab / Ctrl+Shift+Tab 切换标签
     window.addEventListener("keydown", function (e) {
         if (mermaidEditor && !mermaidEditor.hidden) return; // 图表弹窗自行处理 Esc/Ctrl+Enter
+        if (tableEditor && !tableEditor.hidden) return;     // 表格弹窗自行处理 Esc/Ctrl+Enter
         if (e.key === "F5") {
             e.preventDefault();
             postMessage({ type: "reload" });

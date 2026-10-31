@@ -307,6 +307,7 @@ body.theme-green .markdown-body .mermaid-error-hint { color: #a33a3a; }
 }
 
 #mermaid-editor-close { margin-left: auto; }
+#table-editor-close { margin-left: auto; }
 
 .mermaid-editor-head button,
 .mermaid-editor-foot button {
@@ -536,7 +537,8 @@ body.theme-green .markdown-body .mermaid-error-hint { color: #a33a3a; }
     color: #57606a;
 }
 
-#mermaid-editor-apply {
+#mermaid-editor-apply,
+#table-editor-apply {
     background: #0969da;
     border-color: #0969da;
     color: #ffffff;
@@ -611,10 +613,198 @@ body.theme-dark #mermaid-arrow path { fill: #9da5b4; }
 
 body.theme-dark .mermaid-editor-preview .mermaid-error { color: #f48771; }
 
+/* ===================== 表格可视化编辑弹窗 ===================== */
+.table-editor .mermaid-editor-box {
+    width: min(1120px, 96vw);
+    height: auto;
+    max-height: min(760px, 92vh);
+}
 
-/* 图表右上角的编辑按钮 */
+.table-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid #d0d7de;
+    background: #f6f8fa;
+    font-size: 12px;
+}
+
+.table-editor-toolbar button {
+    padding: 4px 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #24292f;
+    cursor: pointer;
+}
+
+.table-editor-size {
+    margin-left: 4px;
+    color: #24292f;
+    font-weight: 600;
+}
+
+.table-editor-tip { margin-left: auto; color: #57606a; }
+
+.table-editor-scroll {
+    flex: 1 1 auto;
+    min-height: 120px;
+    max-height: min(560px, 68vh);
+    overflow: auto;
+    padding: 12px;
+    background: #ffffff;
+}
+
+.table-editor-grid {
+    display: table;
+    width: 100%;
+    margin: 0;
+    overflow: visible;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.table-editor-grid th,
+.table-editor-grid td {
+    min-width: 120px;
+    padding: 0;
+    border: 1px solid #d0d7de;
+    vertical-align: top;
+}
+
+.table-editor-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f6f8fa;
+}
+
+.table-editor-grid .tbl-corner {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    width: 46px;
+    min-width: 46px;
+}
+
+.table-editor-grid .tbl-row-head {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 46px;
+    min-width: 46px;
+    background: #f6f8fa;
+    color: #57606a;
+    font-size: 12px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.table-editor-grid tbody tr:nth-child(2n) { background: transparent; }
+
+.table-editor-grid input {
+    width: 100%;
+    min-width: 110px;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+
+.table-editor-grid input:focus {
+    background: #ffffff;
+    box-shadow: inset 0 0 0 2px #0969da;
+}
+
+.table-editor-grid .tbl-header-input { font-weight: 600; }
+
+.tbl-col-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px 4px;
+}
+
+.tbl-align-select {
+    flex: 1;
+    min-width: 0;
+    padding: 1px 2px;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #57606a;
+    font-size: 11px;
+}
+
+.tbl-col-del,
+.tbl-row-del {
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: #cf222e;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tbl-col-del:hover,
+.tbl-row-del:hover {
+    border-radius: 4px;
+    background: rgba(207, 34, 46, 0.12);
+}
+
+.tbl-row-head span {
+    display: inline-block;
+    margin-right: 2px;
+}
+
+#table-editor-hint {
+    margin-right: auto;
+    color: #57606a;
+}
+
+body.theme-green .table-editor-toolbar,
+body.theme-green .table-editor-scroll { background: #f4fbf4; color: #233423; border-color: #93c59c; }
+body.theme-green .table-editor-toolbar button { background: #d6efd8; border-color: #93c59c; color: #233423; }
+body.theme-green .table-editor-size { color: #233423; }
+body.theme-green .table-editor-tip,
+body.theme-green #table-editor-hint { color: #3d5a40; }
+body.theme-green .table-editor-grid th,
+body.theme-green .table-editor-grid td { border-color: #93c59c; }
+body.theme-green .table-editor-grid thead th,
+body.theme-green .table-editor-grid .tbl-row-head { background: #e7f6e8; color: #3d5a40; }
+body.theme-green .table-editor-grid input:focus { background: #ffffff; box-shadow: inset 0 0 0 2px #2f7d3a; }
+body.theme-green .table-editor-grid input { color: #233423; }
+body.theme-green .tbl-align-select { background: #ffffff; border-color: #93c59c; color: #3d5a40; }
+
+body.theme-dark .table-editor-toolbar,
+body.theme-dark .table-editor-scroll { background: #1e1e1e; color: #d4d4d4; border-color: #3c3c3c; }
+body.theme-dark .table-editor-toolbar button { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
+body.theme-dark .table-editor-size { color: #e6edf3; }
+body.theme-dark .table-editor-tip,
+body.theme-dark #table-editor-hint { color: #9da5b4; }
+body.theme-dark .table-editor-grid th,
+body.theme-dark .table-editor-grid td { border-color: #3c3c3c; }
+body.theme-dark .table-editor-grid thead th,
+body.theme-dark .table-editor-grid .tbl-row-head { background: #252526; color: #9da5b4; }
+body.theme-dark .table-editor-grid input:focus { background: #1e1e1e; box-shadow: inset 0 0 0 2px #4daafc; }
+body.theme-dark .table-editor-grid input { color: #e6edf3; }
+body.theme-dark .tbl-align-select { background: #1e1e1e; border-color: #3c3c3c; color: #d4d4d4; }
+
+
+/* 图表 / 表格右上角的编辑按钮 */
 .markdown-body .mermaid { position: relative; }
-.markdown-body .mermaid-edit-btn {
+.markdown-body .table-wrap {
+    position: relative;
+    margin: 0 0 16px;
+}
+.markdown-body .table-wrap > table { margin: 0; }
+.markdown-body .mermaid-edit-btn,
+.markdown-body .table-edit-btn {
     position: absolute;
     top: 4px;
     right: 4px;
@@ -630,8 +820,10 @@ body.theme-dark .mermaid-editor-preview .mermaid-error { color: #f48771; }
     transition: opacity 0.15s ease;
 }
 
-.markdown-body .mermaid:hover .mermaid-edit-btn { opacity: 1; }
-body.theme-dark .markdown-body .mermaid-edit-btn {
+.markdown-body .mermaid:hover .mermaid-edit-btn,
+.markdown-body .table-wrap:hover .table-edit-btn { opacity: 1; }
+body.theme-dark .markdown-body .mermaid-edit-btn,
+body.theme-dark .markdown-body .table-edit-btn {
     background: rgba(45, 45, 48, 0.92);
     border-color: #3c3c3c;
     color: #e6edf3;
@@ -641,7 +833,7 @@ body.theme-dark .markdown-body .mermaid-edit-btn {
 @media print {
     html, body { height: auto; overflow: visible; background: #ffffff; }
     #editor-pane, #edit-splitter, .find-bar, .lightbox, .copy-code,
-    .mermaid-editor, .mermaid-edit-btn { display: none !important; }
+    .mermaid-editor, .mermaid-edit-btn, .table-editor, .table-edit-btn { display: none !important; }
     #workbench { display: block; height: auto; }
     #preview-pane { display: block !important; overflow: visible; height: auto; }
     .markdown-body { max-width: none; padding: 0; }

@@ -764,6 +764,21 @@ namespace MarkdownViewer
                 var write = SafeLastWrite(tab.FilePath);
                 if (write <= _lastKnownWriteUtc) return;
                 _lastKnownWriteUtc = write;
+
+                // 自己的保存也会触发 FileSystemWatcher：内容与编辑器基线完全一致时不再提示
+                if (!tab.IsDirty)
+                {
+                    try
+                    {
+                        var disk = FileReaderHelper.ReadMarkdownFileEx(tab.FilePath);
+                        var diskText = (disk.Text ?? string.Empty).Replace("\r\n", "\n");
+                        var localText = (tab.MarkdownText ?? string.Empty).Replace("\r\n", "\n");
+                        if (string.Equals(diskText, localText, StringComparison.Ordinal))
+                            return;
+                    }
+                    catch { /* 读取失败则继续按外部变更处理 */ }
+                }
+
                 if (tab.IsDirty)
                 {
                     // 本地有未保存修改：不能静默丢弃，也不能静默忽略
@@ -2226,7 +2241,8 @@ namespace MarkdownViewer
             }
             var dlg = new TableInsertDialog(this);
             if (dlg.ShowDialog() != true) return;
-            InsertMarkdown(dlg.BuildMarkdown());
+            // 先在原生对话框选择行列数，再打开可视化表格编辑器填写内容
+            PostToWeb(new { type = "tableEditor", rows = dlg.Rows, cols = dlg.Columns });
         }
 
         private void InsertMermaid_Click(object sender, RoutedEventArgs e)

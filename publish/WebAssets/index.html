@@ -34,6 +34,7 @@
                     <li>工具栏切换「预览 / 分栏 / 编辑」；编辑模式下 <code>Ctrl+S</code> 保存</li>
                     <li>支持命令行参数：<code>MarkdownViewer.exe 文档.md</code></li>
                     <li>支持 GFM 表格、任务列表、代码块、相对路径图片</li>
+                    <li>点击表格或图表右上角「编辑」（也可双击）打开可视化编辑器</li>
                     <li>菜单「帮助 → 关于 MarkdownViewer」可查看版本、作者与开源协议</li>
                     <li><code>Ctrl+F</code> 查找 / 替换，<code>Ctrl+滚轮</code> 或 <code>Ctrl+=</code> 缩放</li>
                     <li>工具栏可导出 PDF / HTML、打印，粘贴图片自动保存到 <code>assets</code></li>
@@ -135,6 +136,30 @@
             <span id="mermaid-editor-hint">Ctrl+Enter 应用 · Esc 取消</span>
             <button id="mermaid-editor-cancel" type="button">取消</button>
             <button id="mermaid-editor-apply" type="button">应用</button>
+        </div>
+    </div>
+</div>
+
+<!-- 表格可视化编辑弹窗 -->
+<div id="table-editor" class="mermaid-editor table-editor" hidden>
+    <div class="mermaid-editor-box">
+        <div class="mermaid-editor-head">
+            <span id="table-editor-title">表格编辑</span>
+            <button id="table-editor-close" type="button" title="关闭（Esc）">✕</button>
+        </div>
+        <div class="table-editor-toolbar">
+            <button id="table-add-row" type="button">+ 行</button>
+            <button id="table-add-col" type="button">+ 列</button>
+            <span id="table-editor-size" class="table-editor-size">3 行 × 3 列</span>
+            <span class="table-editor-tip">首行为表头；Tab 切换单元格</span>
+        </div>
+        <div class="table-editor-scroll">
+            <table id="table-editor-grid" class="table-editor-grid"></table>
+        </div>
+        <div class="mermaid-editor-foot">
+            <span id="table-editor-hint">单击单元格编辑；Ctrl+Enter 应用 · Esc 取消</span>
+            <button id="table-editor-cancel" type="button">取消</button>
+            <button id="table-editor-apply" type="button">应用</button>
         </div>
     </div>
 </div>

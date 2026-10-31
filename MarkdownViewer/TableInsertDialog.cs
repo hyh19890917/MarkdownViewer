@@ -19,7 +19,7 @@ namespace MarkdownViewer
         public TableInsertDialog(Window owner)
         {
             Owner = owner;
-            Title = "插入表格";
+            Title = "新建表格";
             Width = 340;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
@@ -34,7 +34,7 @@ namespace MarkdownViewer
             var panel = new StackPanel { Margin = new Thickness(18, 16, 18, 14) };
             panel.Children.Add(new TextBlock
             {
-                Text = "设置表格尺寸",
+                Text = "设置初始尺寸",
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 12)
@@ -52,7 +52,7 @@ namespace MarkdownViewer
 
             panel.Children.Add(new TextBlock
             {
-                Text = "范围：行数 2–100，列数 1–20；第一行作为表头。",
+                Text = "范围：行数 2–100，列数 1–20；第一行作为表头。确定后打开可视化表格编辑器。",
                 Foreground = owner.TryFindResource("StatusTextBrush") as Brush ?? SystemColors.GrayTextBrush,
                 FontSize = 11,
                 Margin = new Thickness(0, 8, 0, 0)
@@ -73,7 +73,7 @@ namespace MarkdownViewer
             };
             var ok = new Button
             {
-                Content = "插入",
+                Content = "下一步",
                 Padding = new Thickness(16, 4, 16, 4),
                 IsDefault = true
             };
