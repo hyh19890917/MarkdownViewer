@@ -67,12 +67,69 @@
     <div class="mermaid-editor-box">
         <div class="mermaid-editor-head">
             <span>流程图 / 图表编辑</span>
+            <div class="mermaid-editor-tabs">
+                <button id="mermaid-tab-visual" type="button" class="active">图形</button>
+                <button id="mermaid-tab-source" type="button">源码</button>
+            </div>
             <button id="mermaid-editor-close" type="button" title="关闭（Esc）">✕</button>
         </div>
         <div class="mermaid-editor-body">
-            <textarea id="mermaid-source" spellcheck="false"
-                      placeholder="输入 Mermaid 语法，例如 flowchart TD ..."></textarea>
-            <div id="mermaid-preview" class="mermaid-editor-preview"></div>
+            <div id="mermaid-visual-pane" class="mermaid-visual-pane">
+                <div class="mermaid-toolbox">
+                    <div class="mermaid-toolbox-title">添加节点</div>
+                    <div class="mermaid-shape-grid">
+                        <button type="button" data-shape="stadium">开始 / 结束</button>
+                        <button type="button" data-shape="rect">处理</button>
+                        <button type="button" data-shape="diamond">判断</button>
+                        <button type="button" data-shape="circle">连接点</button>
+                    </div>
+                    <label class="mermaid-field">方向
+                        <select id="mermaid-direction">
+                            <option value="TD">从上到下</option>
+                            <option value="LR">从左到右</option>
+                            <option value="BT">从下到上</option>
+                            <option value="RL">从右到左</option>
+                        </select>
+                    </label>
+                    <button id="mermaid-autolayout" type="button">自动排列</button>
+                    <div id="mermaid-props" class="mermaid-props" hidden>
+                        <div id="mermaid-props-title" class="mermaid-toolbox-title">属性</div>
+                        <label class="mermaid-field">文字
+                            <input id="mermaid-label-input" type="text" maxlength="80"/>
+                        </label>
+                        <label class="mermaid-field" id="mermaid-shape-field">形状
+                            <select id="mermaid-shape-select">
+                                <option value="stadium">开始 / 结束</option>
+                                <option value="rect">处理</option>
+                                <option value="diamond">判断</option>
+                                <option value="circle">连接点</option>
+                                <option value="parallelogram">数据</option>
+                            </select>
+                        </label>
+                        <button id="mermaid-delete-selection" type="button">删除所选</button>
+                    </div>
+                    <div class="mermaid-toolbox-tip">
+                        拖动节点移动；从节点边缘圆点拖到另一个节点连线；双击节点编辑文字。
+                    </div>
+                </div>
+                <div class="mermaid-canvas-wrap">
+                    <svg id="mermaid-canvas" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <marker id="mermaid-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+                            </marker>
+                        </defs>
+                        <g id="mermaid-edge-layer"></g>
+                        <g id="mermaid-node-layer"></g>
+                    </svg>
+                </div>
+            </div>
+            <div id="mermaid-source-pane" class="mermaid-source-pane" hidden>
+                <textarea id="mermaid-source" spellcheck="false"
+                          placeholder="输入 Mermaid 语法，例如 flowchart TD ..."></textarea>
+                <div id="mermaid-preview" class="mermaid-editor-preview"></div>
+            </div>
         </div>
         <div class="mermaid-editor-foot">
             <span id="mermaid-editor-hint">Ctrl+Enter 应用 · Esc 取消</span>

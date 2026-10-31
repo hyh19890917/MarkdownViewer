@@ -213,6 +213,14 @@ body.theme-dark .hljs-meta { color: #9da5b4; }
     border-radius: 6px;
     padding: 8px 10px;
 }
+.markdown-body .mermaid-error-hint {
+    margin-top: 8px;
+    color: #cf222e;
+    font-size: 13px;
+    text-align: center;
+}
+body.theme-dark .markdown-body .mermaid-error-hint { color: #f48771; }
+body.theme-green .markdown-body .mermaid-error-hint { color: #a33a3a; }
 
 /* ===================== 图片灯箱 ===================== */
 .lightbox {
@@ -266,13 +274,39 @@ body.theme-dark .hljs-meta { color: #9da5b4; }
 .mermaid-editor-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
+    gap: 12px;
+    padding: 8px 14px;
     border-bottom: 1px solid #d0d7de;
     font-size: 14px;
     font-weight: 600;
     background: #f6f8fa;
 }
+
+.mermaid-editor-head > span:first-child { white-space: nowrap; }
+
+.mermaid-editor-tabs {
+    display: flex;
+    gap: 4px;
+    margin-left: 6px;
+}
+
+.mermaid-editor-tabs button {
+    padding: 4px 14px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #57606a;
+    cursor: pointer;
+}
+
+.mermaid-editor-tabs button.active {
+    background: #ffffff;
+    border-color: #d0d7de;
+    color: #0969da;
+    box-shadow: 0 1px 2px rgba(27, 31, 36, 0.08);
+}
+
+#mermaid-editor-close { margin-left: auto; }
 
 .mermaid-editor-head button,
 .mermaid-editor-foot button {
@@ -290,7 +324,19 @@ body.theme-dark .hljs-meta { color: #9da5b4; }
     min-height: 0;
 }
 
+.mermaid-source-pane,
+.mermaid-visual-pane {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+.mermaid-source-pane[hidden],
+.mermaid-visual-pane[hidden] { display: none; }
+
 #mermaid-source {
+    flex: 0 0 43%;
     width: 43%;
     min-width: 220px;
     height: 100%;
@@ -320,6 +366,160 @@ body.theme-dark .hljs-meta { color: #9da5b4; }
     height: auto;
 }
 
+/* 图形化流程图编辑 */
+#mermaid-visual-pane { background: #f6f8fa; }
+
+.mermaid-toolbox {
+    display: flex;
+    flex: 0 0 200px;
+    flex-direction: column;
+    gap: 8px;
+    width: 200px;
+    padding: 12px;
+    overflow: auto;
+    border-right: 1px solid #d0d7de;
+    background: #f6f8fa;
+}
+
+.mermaid-toolbox-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #57606a;
+}
+
+.mermaid-shape-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.mermaid-shape-grid button,
+#mermaid-autolayout,
+#mermaid-delete-selection {
+    padding: 6px 6px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #24292f;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.mermaid-shape-grid button:hover,
+#mermaid-autolayout:hover,
+#mermaid-delete-selection:hover { background: #eaeef2; }
+#mermaid-delete-selection { color: #cf222e; }
+
+.mermaid-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #57606a;
+}
+
+.mermaid-field[hidden] { display: none; }
+
+.mermaid-field select,
+.mermaid-field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    background: #ffffff;
+    color: #24292f;
+    font-size: 12px;
+}
+
+.mermaid-props {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid #d0d7de;
+}
+
+.mermaid-props[hidden] { display: none; }
+
+.mermaid-toolbox-tip {
+    margin-top: auto;
+    padding-top: 10px;
+    color: #6a737d;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.mermaid-canvas-wrap {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    background-color: #ffffff;
+    background-image:
+        linear-gradient(#eaeef2 1px, transparent 1px),
+        linear-gradient(90deg, #eaeef2 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+#mermaid-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    user-select: none;
+}
+
+.fc-node { cursor: move; }
+.fc-node .fc-shape {
+    fill: #ffffff;
+    stroke: #57606a;
+    stroke-width: 1.5;
+}
+.fc-node.selected .fc-shape {
+    stroke: #0969da;
+    stroke-width: 2.5;
+    fill: #ddf4ff;
+}
+.fc-node text {
+    fill: #24292f;
+    font-size: 13px;
+    text-anchor: middle;
+    pointer-events: none;
+}
+.fc-port {
+    fill: #ffffff;
+    stroke: #0969da;
+    stroke-width: 1.5;
+    opacity: 0.8;
+    cursor: crosshair;
+}
+.fc-port:hover { opacity: 1; }
+.fc-edge {
+    fill: none;
+    stroke: #57606a;
+    stroke-width: 1.6;
+    marker-end: url(#mermaid-arrow);
+    cursor: pointer;
+}
+.fc-edge.selected { stroke: #0969da; stroke-width: 2.6; }
+.fc-edge-label {
+    fill: #57606a;
+    font-size: 11px;
+    text-anchor: middle;
+    paint-order: stroke;
+    stroke: #ffffff;
+    stroke-width: 3px;
+    pointer-events: none;
+}
+.fc-temp-edge {
+    fill: none;
+    stroke: #0969da;
+    stroke-width: 1.8;
+    stroke-dasharray: 5 4;
+    pointer-events: none;
+}
+#mermaid-arrow path { fill: #57606a; }
+
 .mermaid-editor-foot {
     display: flex;
     align-items: center;
@@ -346,21 +546,61 @@ body.theme-green .mermaid-editor-box,
 body.theme-green #mermaid-source,
 body.theme-green .mermaid-editor-preview { background: #f4fbf4; color: #233423; }
 body.theme-green .mermaid-editor-head,
-body.theme-green .mermaid-editor-foot { background: #e7f6e8; border-color: #93c59c; }
+body.theme-green .mermaid-editor-foot,
+body.theme-green .mermaid-toolbox,
+body.theme-green #mermaid-visual-pane { background: #e7f6e8; border-color: #93c59c; }
 body.theme-green #mermaid-source { border-right-color: #93c59c; }
+body.theme-green .mermaid-toolbox { border-right-color: #93c59c; }
 body.theme-green .mermaid-editor-head button,
-body.theme-green .mermaid-editor-foot button { background: #d6efd8; border-color: #93c59c; color: #233423; }
-body.theme-green #mermaid-editor-hint { color: #3d5a40; }
+body.theme-green .mermaid-editor-foot button,
+body.theme-green .mermaid-shape-grid button,
+body.theme-green #mermaid-autolayout,
+body.theme-green #mermaid-delete-selection { background: #d6efd8; border-color: #93c59c; color: #233423; }
+body.theme-green #mermaid-editor-hint,
+body.theme-green .mermaid-toolbox-tip,
+body.theme-green .mermaid-field,
+body.theme-green .mermaid-toolbox-title { color: #3d5a40; }
+body.theme-green .mermaid-canvas-wrap {
+    background-color: #f4fbf4;
+    background-image: linear-gradient(#c3e0c7 1px, transparent 1px),
+                      linear-gradient(90deg, #c3e0c7 1px, transparent 1px);
+}
+body.theme-green .fc-node .fc-shape { fill: #ffffff; stroke: #4a6b52; }
+body.theme-green .fc-node text { fill: #233423; }
+body.theme-green #mermaid-arrow path { fill: #4a6b52; }
 
 body.theme-dark .mermaid-editor-box,
 body.theme-dark #mermaid-source,
 body.theme-dark .mermaid-editor-preview { background: #1e1e1e; color: #d4d4d4; border-color: #3c3c3c; }
 body.theme-dark .mermaid-editor-head,
-body.theme-dark .mermaid-editor-foot { background: #252526; border-color: #3c3c3c; }
+body.theme-dark .mermaid-editor-foot,
+body.theme-dark .mermaid-toolbox,
+body.theme-dark #mermaid-visual-pane { background: #252526; border-color: #3c3c3c; }
 body.theme-dark #mermaid-source { border-right-color: #3c3c3c; }
+body.theme-dark .mermaid-toolbox { border-right-color: #3c3c3c; }
 body.theme-dark .mermaid-editor-head button,
-body.theme-dark .mermaid-editor-foot button { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
-body.theme-dark #mermaid-editor-hint { color: #9da5b4; }
+body.theme-dark .mermaid-editor-foot button,
+body.theme-dark .mermaid-shape-grid button,
+body.theme-dark #mermaid-autolayout,
+body.theme-dark #mermaid-delete-selection { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
+body.theme-dark .mermaid-editor-tabs button.active { background: #1e1e1e; border-color: #3c3c3c; color: #4daafc; }
+body.theme-dark #mermaid-editor-hint,
+body.theme-dark .mermaid-toolbox-tip,
+body.theme-dark .mermaid-field,
+body.theme-dark .mermaid-toolbox-title { color: #9da5b4; }
+body.theme-dark .mermaid-field select,
+body.theme-dark .mermaid-field input { background: #1e1e1e; border-color: #3c3c3c; color: #d4d4d4; }
+body.theme-dark .mermaid-canvas-wrap {
+    background-color: #1e1e1e;
+    background-image: linear-gradient(#2d2d30 1px, transparent 1px),
+                      linear-gradient(90deg, #2d2d30 1px, transparent 1px);
+}
+body.theme-dark .fc-node .fc-shape { fill: #2d2d30; stroke: #9da5b4; }
+body.theme-dark .fc-node.selected .fc-shape { fill: #263a4d; stroke: #4daafc; }
+body.theme-dark .fc-node text { fill: #e6edf3; }
+body.theme-dark .fc-edge { stroke: #9da5b4; }
+body.theme-dark .fc-edge-label { fill: #9da5b4; stroke: #1e1e1e; }
+body.theme-dark #mermaid-arrow path { fill: #9da5b4; }
 
 .mermaid-editor-preview .mermaid-error {
     color: #cf222e;
@@ -370,6 +610,7 @@ body.theme-dark #mermaid-editor-hint { color: #9da5b4; }
 }
 
 body.theme-dark .mermaid-editor-preview .mermaid-error { color: #f48771; }
+
 
 /* 图表右上角的编辑按钮 */
 .markdown-body .mermaid { position: relative; }

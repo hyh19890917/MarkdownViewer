@@ -18,6 +18,20 @@
     var mermaidSource = document.getElementById("mermaid-source");
     var mermaidPreview = document.getElementById("mermaid-preview");
     var mermaidEditorHint = document.getElementById("mermaid-editor-hint");
+    var mermaidVisualPane = document.getElementById("mermaid-visual-pane");
+    var mermaidSourcePane = document.getElementById("mermaid-source-pane");
+    var mermaidTabVisual = document.getElementById("mermaid-tab-visual");
+    var mermaidTabSource = document.getElementById("mermaid-tab-source");
+    var mermaidCanvas = document.getElementById("mermaid-canvas");
+    var mermaidNodeLayer = document.getElementById("mermaid-node-layer");
+    var mermaidEdgeLayer = document.getElementById("mermaid-edge-layer");
+    var mermaidDirection = document.getElementById("mermaid-direction");
+    var mermaidProps = document.getElementById("mermaid-props");
+    var mermaidPropsTitle = document.getElementById("mermaid-props-title");
+    var mermaidLabelInput = document.getElementById("mermaid-label-input");
+    var mermaidShapeField = document.getElementById("mermaid-shape-field");
+    var mermaidShapeSelect = document.getElementById("mermaid-shape-select");
+    var mermaidDeleteSelection = document.getElementById("mermaid-delete-selection");
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -361,6 +375,17 @@
     var mermaidPreviewTimer = null;
     var mermaidPreviewSeq = 0;
     var mermaidEditIndex = null;
+    var mermaidTab = "visual";
+    var mermaidApplying = false;
+    var flowNodes = [];        // { id, label, shape, x, y, w, h }，x/y 为中心点
+    var flowEdges = [];        // { id, from, to, label }
+    var flowDirection = "TD";
+    var flowSelected = null;   // { type: "node" | "edge", id }
+    var flowNodeSeq = 0;
+    var flowEdgeSeq = 0;
+    var flowDrag = null;
+    var flowConnect = null;
+    var flowTempPath = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -501,7 +526,7 @@
                 startOnLoad: false,
                 securityLevel: "strict",
                 theme: mermaidThemeName(),
-                flowchart: { htmlLabels: false, useMaxWidth: true },
+                flowchart: { htmlLabels: true, useMaxWidth: true },
                 sequence: { useMaxWidth: true },
                 gantt: { useMaxWidth: true }
             });
@@ -552,41 +577,65 @@
         var nodes = root.querySelectorAll(".mermaid");
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i];
-            if (node.querySelector(".mermaid-edit-btn")) continue;
-            var btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "mermaid-edit-btn";
-            btn.textContent = "编辑";
-            btn.title = "编辑 Mermaid 源码";
-            btn.addEventListener("click", function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                var target = e.currentTarget.parentNode;
-                openMermaidEditor(target.getAttribute("data-mermaid-index"),
-                    target.getAttribute("data-mermaid-src"));
-            });
-            node.appendChild(btn);
+            if (!node.querySelector(".mermaid-edit-btn")) {
+                var btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "mermaid-edit-btn";
+                btn.textContent = "编辑";
+                btn.title = "编辑 Mermaid 源码";
+                btn.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var target = e.currentTarget.parentNode;
+                    openMermaidEditor(target.getAttribute("data-mermaid-index"),
+                        target.getAttribute("data-mermaid-src"));
+                });
+                node.appendChild(btn);
+            }
+            var hasError = !!node.querySelector('.error-text, .error-icon, svg[aria-roledescription="error"]');
+            var hint = node.querySelector(".mermaid-error-hint");
+            if (hasError && !hint) {
+                hint = document.createElement("div");
+                hint.className = "mermaid-error-hint";
+                hint.textContent = "Mermaid 语法错误，点击右上角「编辑」修正源码";
+                node.appendChild(hint);
+            } else if (!hasError && hint) {
+                hint.parentNode.removeChild(hint);
+            }
         }
     }
 
     /* ===================== Mermaid 编辑弹窗 ===================== */
-    var MERMAID_TEMPLATE = "flowchart TD\n  A[开始] --> B{条件}\n  B -->|是| C[结束]\n  B -->|否| A\n";
-
     function openMermaidEditor(index, source) {
         if (!mermaidEditor) return;
         var parsed = (index === null || index === undefined || index === "") ? null : parseInt(index, 10);
         mermaidEditIndex = isNaN(parsed) ? null : parsed;
-        mermaidSource.value = (typeof source === "string" && source.trim())
-            ? source
-            : (mermaidEditIndex === null ? MERMAID_TEMPLATE : "");
-        mermaidEditorHint.textContent = mermaidEditIndex === null
-            ? "新建图表：Ctrl+Enter 应用 · Esc 取消"
-            : "编辑图表 " + (mermaidEditIndex + 1) + "：Ctrl+Enter 应用 · Esc 取消";
+        var text = (typeof source === "string") ? source : "";
+        var isNew = mermaidEditIndex === null;
+
+        if (isNew && !text.trim()) {
+            initDefaultFlowGraph();
+            mermaidSource.value = serializeFlowGraph();
+        } else {
+            mermaidSource.value = text;
+        }
+
         mermaidEditor.hidden = false;
-        updateMermaidPreview();
+        if (!isNew && !importFlowGraph(text)) {
+            setMermaidTab("source", true);
+            mermaidEditorHint.textContent =
+                "当前源码包含图形编辑器暂不支持的语法（如 subgraph/样式），请继续使用源码模式";
+        } else {
+            setMermaidTab("visual", true);
+            // 把自动布局后的位置写回源码，重新打开时保持相同布局
+            syncFlowSource();
+        }
+
         setTimeout(function () {
-            mermaidSource.focus();
-            mermaidSource.select();
+            if (mermaidTab === "source") {
+                mermaidSource.focus();
+                mermaidSource.select();
+            }
         }, 30);
     }
 
@@ -599,7 +648,654 @@
             clearTimeout(mermaidPreviewTimer);
             mermaidPreviewTimer = null;
         }
+        flowDrag = null;
+        flowConnect = null;
+        flowTempPath = null;
+        mermaidApplying = false;
         if (viewMode !== "preview") cm.focus();
+    }
+
+    var SVG_NS = "http://www.w3.org/2000/svg";
+
+    function svgEl(name) {
+        return document.createElementNS(SVG_NS, name);
+    }
+
+    function flowNodeById(id) {
+        for (var i = 0; i < flowNodes.length; i++) {
+            if (flowNodes[i].id === id) return flowNodes[i];
+        }
+        return null;
+    }
+
+    function flowEdgeById(id) {
+        for (var i = 0; i < flowEdges.length; i++) {
+            if (flowEdges[i].id === id) return flowEdges[i];
+        }
+        return null;
+    }
+
+    function flowDisplayLines(label) {
+        var raw = String(label || "").split(/\r?\n/);
+        var lines = [];
+        raw.forEach(function (line) {
+            if (!line) { lines.push(""); return; }
+            // 简单按 18 个字符换行，避免长文本溢出节点
+            for (var i = 0; i < line.length; i += 18) lines.push(line.slice(i, i + 18));
+        });
+        if (!lines.length) lines.push("");
+        return lines.slice(0, 5);
+    }
+
+    function sizeFlowNode(node) {
+        var lines = flowDisplayLines(node.label);
+        var maxChars = 0;
+        lines.forEach(function (line) { maxChars = Math.max(maxChars, line.length); });
+        node.w = Math.max(90, Math.min(280, maxChars * 13 + 32));
+        var base = node.shape === "diamond" ? 72 : node.shape === "circle" ? 70 : 50;
+        node.h = base + Math.max(0, lines.length - 1) * 16;
+        if (node.shape === "diamond") node.w = Math.max(node.w, node.h + 20);
+        if (node.shape === "circle") node.w = Math.max(node.w, node.h);
+    }
+
+    function addFlowNodeRaw(label, shape, x, y) {
+        var node = {
+            id: "n" + (++flowNodeSeq),
+            label: label || "新节点",
+            shape: shape || "rect",
+            x: x,
+            y: y
+        };
+        sizeFlowNode(node);
+        flowNodes.push(node);
+        return node;
+    }
+
+    function addFlowEdgeRaw(from, to, label) {
+        var edge = { id: "e" + (++flowEdgeSeq), from: from, to: to, label: label || "" };
+        flowEdges.push(edge);
+        return edge;
+    }
+
+    function initDefaultFlowGraph() {
+        flowNodes = [];
+        flowEdges = [];
+        flowNodeSeq = 0;
+        flowEdgeSeq = 0;
+        flowDirection = "TD";
+        flowSelected = null;
+        var start = addFlowNodeRaw("开始", "stadium", 500, 100);
+        var process = addFlowNodeRaw("处理", "rect", 500, 220);
+        var end = addFlowNodeRaw("结束", "stadium", 500, 340);
+        addFlowEdgeRaw(start.id, process.id, "");
+        addFlowEdgeRaw(process.id, end.id, "");
+    }
+
+    function parseFlowNodeToken(token) {
+        var text = String(token || "").trim().replace(/;+$/, "");
+        if (!text) return null;
+        var m = /^([A-Za-z_][\w-]*)([\s\S]*)$/.exec(text);
+        if (!m) return null;
+        var id = m[1];
+        var rest = m[2].trim();
+        var shape = "rect";
+        var label = id;
+        if (rest) {
+            if (rest.indexOf("([") === 0 && rest.slice(-2) === "])") {
+                shape = "stadium"; label = rest.slice(2, -2);
+            } else if (rest.indexOf("((") === 0 && rest.slice(-2) === "))") {
+                shape = "circle"; label = rest.slice(2, -2);
+            } else if (rest.indexOf("[/") === 0 && rest.slice(-2) === "/]") {
+                shape = "parallelogram"; label = rest.slice(2, -2);
+            } else if (rest.charAt(0) === "{" && rest.slice(-1) === "}") {
+                shape = "diamond"; label = rest.slice(1, -1);
+            } else if (rest.charAt(0) === "[" && rest.slice(-1) === "]") {
+                shape = "rect"; label = rest.slice(1, -1);
+            } else if (rest.charAt(0) === "(" && rest.slice(-1) === ")") {
+                shape = "stadium"; label = rest.slice(1, -1);
+            } else {
+                return null;
+            }
+            label = label.trim();
+            if ((label.charAt(0) === "\"" && label.slice(-1) === "\"") ||
+                (label.charAt(0) === "'" && label.slice(-1) === "'")) {
+                label = label.slice(1, -1);
+            }
+            label = unescapeFlowLabel(label).trim();
+        }
+        return { id: id, label: label || id, shape: shape };
+    }
+
+    /* 从 Mermaid 源码恢复图形（支持常见 flowchart/graph 节点与箭头；复杂语法返回 false） */
+    function importFlowGraph(source) {
+        var lines = String(source || "").split(/\r?\n/);
+        var nodes = [];
+        var edges = [];
+        var nodeMap = {};
+        var positions = {};
+        var direction = "TD";
+        var sawDirective = false;
+
+        function ensureNode(parsed) {
+            if (!nodeMap[parsed.id]) {
+                var node = {
+                    id: parsed.id, label: parsed.label, shape: parsed.shape,
+                    x: 0, y: 0
+                };
+                sizeFlowNode(node);
+                nodeMap[parsed.id] = node;
+                nodes.push(node);
+            } else if (parsed.label !== parsed.id) {
+                nodeMap[parsed.id].label = parsed.label;
+                nodeMap[parsed.id].shape = parsed.shape;
+            }
+            return nodeMap[parsed.id];
+        }
+
+        for (var i = 0; i < lines.length; i++) {
+            var t = lines[i].trim();
+            if (!t) continue;
+            var posMatch = /^%%\s*mdviewer:pos\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/i.exec(t);
+            if (posMatch) {
+                positions[posMatch[1]] = { x: parseFloat(posMatch[2]), y: parseFloat(posMatch[3]) };
+                continue;
+            }
+            if (t.indexOf("%%") === 0) continue;
+
+            var dirMatch = /^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\b/i.exec(t);
+            if (dirMatch) {
+                direction = dirMatch[1].toUpperCase();
+                if (direction === "TB") direction = "TD";
+                sawDirective = true;
+                continue;
+            }
+            if (/^(subgraph|end|style|classDef|class|linkStyle|click|direction|accTitle|accDescr)\b/i.test(t)) {
+                return false;
+            }
+
+            var parts = t.split("-->");
+            if (parts.length === 1) {
+                var only = parseFlowNodeToken(t);
+                if (!only) return false;
+                ensureNode(only);
+                continue;
+            }
+
+            var first = parts[0].trim();
+            var firstLabel = "";
+            var dashLabel = /^(.*?)\s+--\s+(.+)$/.exec(first);
+            if (dashLabel) {
+                first = dashLabel[1].trim();
+                firstLabel = unescapeFlowLabel(dashLabel[2].trim());
+            }
+            var current = parseFlowNodeToken(first);
+            if (!current) return false;
+            current = ensureNode(current);
+
+            for (var k = 1; k < parts.length; k++) {
+                var part = parts[k].trim();
+                var label = "";
+                if (part.charAt(0) === "|") {
+                    var end = part.indexOf("|", 1);
+                    if (end < 0) return false;
+                    label = unescapeFlowLabel(part.slice(1, end).trim());
+                    part = part.slice(end + 1).trim();
+                }
+                var next = parseFlowNodeToken(part);
+                if (!next) return false;
+                next = ensureNode(next);
+                if (current.id !== next.id) {
+                    addFlowEdgeRawTo(edges, current.id, next.id,
+                        (k === 1 ? firstLabel : "") || label);
+                }
+                current = next;
+            }
+            sawDirective = true;
+        }
+
+        if (!nodes.length || !sawDirective) return false;
+
+        flowNodes = nodes;
+        flowEdges = edges;
+        flowDirection = direction;
+        flowNodeSeq = 0;
+        nodes.forEach(function (node) {
+            var m = /^n(\d+)$/.exec(node.id);
+            if (m) flowNodeSeq = Math.max(flowNodeSeq, parseInt(m[1], 10));
+        });
+        flowEdgeSeq = edges.length;
+        flowSelected = null;
+        nodes.forEach(function (node, index) {
+            var p = positions[node.id];
+            if (p) {
+                node.x = p.x;
+                node.y = p.y;
+            } else {
+                node.x = null;
+            }
+            sizeFlowNode(node);
+        });
+        layoutFlowNodes(true);
+        return true;
+    }
+
+    function addFlowEdgeRawTo(list, from, to, label) {
+        list.push({ id: "e" + (list.length + 1), from: from, to: to, label: label || "" });
+    }
+
+    function layoutFlowNodes(onlyMissing) {
+        var count = flowNodes.length;
+        flowNodes.forEach(function (node, index) {
+            if (onlyMissing && node.x !== null && isFinite(node.x)) return;
+            var x = 500;
+            var y = 90 + index * 120;
+            if (flowDirection === "LR") { x = 120 + index * 180; y = 320; }
+            else if (flowDirection === "RL") { x = 1080 - index * 180; y = 320; }
+            else if (flowDirection === "BT") { x = 500; y = 690 - index * 120; }
+            node.x = Math.max(70, Math.min(1130, x));
+            node.y = Math.max(50, Math.min(750, y));
+        });
+        // 保持数量为 0 时也不报错
+        if (!count) return;
+    }
+
+    function escapeFlowLabel(label) {
+        return String(label || "")
+            .replace(/#/g, "#35;")
+            .replace(/&/g, "#38;")
+            .replace(/</g, "#60;")
+            .replace(/>/g, "#62;")
+            .replace(/\\/g, "#92;")
+            .replace(/"/g, "#quot;")
+            .replace(/`/g, "#96;")
+            .replace(/\r?\n/g, "<br/>");
+    }
+
+    function unescapeFlowLabel(label) {
+        var map = { "35": "#", "38": "&", "60": "<", "62": ">", "92": "\\", "96": "`", "quot": "\"" };
+        return String(label || "")
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/#(35|38|60|62|92|96|quot);/gi, function (_, code) {
+                return map[code.toLowerCase()];
+            });
+    }
+
+    function flowShapeText(node) {
+        var label = escapeFlowLabel(node.label);
+        switch (node.shape) {
+            case "stadium": return "([\"" + label + "\"])";
+            case "circle": return "((\"" + label + "\"))";
+            case "diamond": return "{\"" + label + "\"}";
+            case "parallelogram": return "[/\"" + label + "\"/]";
+            default: return "[\"" + label + "\"]";
+        }
+    }
+
+    function serializeFlowGraph() {
+        var out = ["flowchart " + (flowDirection || "TD")];
+        flowNodes.forEach(function (node) {
+            out.push("  %% mdviewer:pos " + node.id + " " +
+                Math.round(node.x === null ? 500 : node.x) + " " +
+                Math.round(node.y === null ? 100 : node.y));
+        });
+        flowNodes.forEach(function (node) {
+            out.push("  " + node.id + flowShapeText(node));
+        });
+        flowEdges.forEach(function (edge) {
+            var label = edge.label ? "|" + escapeFlowLabel(edge.label) + "|" : "";
+            out.push("  " + edge.from + " -->" + label + " " + edge.to);
+        });
+        return out.join("\n") + "\n";
+    }
+
+    function syncFlowSource() {
+        if (!mermaidSource) return;
+        mermaidSource.value = serializeFlowGraph();
+        if (mermaidTab === "source") updateMermaidPreview();
+    }
+
+    function flowBorderPoint(node, dx, dy) {
+        var scale = Math.min(
+            dx !== 0 ? (node.w / 2) / Math.abs(dx) : Infinity,
+            dy !== 0 ? (node.h / 2) / Math.abs(dy) : Infinity);
+        if (!isFinite(scale)) scale = 0;
+        return { x: node.x + dx * scale, y: node.y + dy * scale };
+    }
+
+    function renderFlowEdges() {
+        mermaidEdgeLayer.innerHTML = "";
+        flowEdges.forEach(function (edge) {
+            var a = flowNodeById(edge.from);
+            var b = flowNodeById(edge.to);
+            if (!a || !b) return;
+            var dx = b.x - a.x;
+            var dy = b.y - a.y;
+            var p1 = flowBorderPoint(a, dx, dy);
+            var p2 = flowBorderPoint(b, -dx, -dy);
+            var path = svgEl("path");
+            path.setAttribute("class", "fc-edge" +
+                (flowSelected && flowSelected.type === "edge" && flowSelected.id === edge.id
+                    ? " selected" : ""));
+            path.setAttribute("data-edge-id", edge.id);
+            path.setAttribute("d", "M " + p1.x + " " + p1.y + " L " + p2.x + " " + p2.y);
+            path.addEventListener("click", function (e) {
+                e.stopPropagation();
+                selectFlowEdge(edge.id);
+            });
+            mermaidEdgeLayer.appendChild(path);
+
+            if (edge.label) {
+                var text = svgEl("text");
+                text.setAttribute("class", "fc-edge-label");
+                text.setAttribute("x", (p1.x + p2.x) / 2);
+                text.setAttribute("y", (p1.y + p2.y) / 2 - 6);
+                text.textContent = edge.label;
+                mermaidEdgeLayer.appendChild(text);
+            }
+        });
+        if (flowTempPath) mermaidEdgeLayer.appendChild(flowTempPath);
+    }
+
+    function renderFlowNode(node) {
+        var g = svgEl("g");
+        g.setAttribute("class", "fc-node" +
+            (flowSelected && flowSelected.type === "node" && flowSelected.id === node.id
+                ? " selected" : ""));
+        g.setAttribute("data-node-id", node.id);
+        g.setAttribute("transform", "translate(" + node.x + " " + node.y + ")");
+
+        var shape;
+        if (node.shape === "diamond") {
+            shape = svgEl("polygon");
+            shape.setAttribute("points",
+                "0," + (-node.h / 2) + " " + (node.w / 2) + ",0 0," + (node.h / 2) +
+                " " + (-node.w / 2) + ",0");
+        } else if (node.shape === "circle") {
+            shape = svgEl("ellipse");
+            shape.setAttribute("rx", node.w / 2);
+            shape.setAttribute("ry", node.h / 2);
+        } else if (node.shape === "parallelogram") {
+            shape = svgEl("polygon");
+            var skew = 12;
+            shape.setAttribute("points",
+                (-node.w / 2 + skew) + "," + (-node.h / 2) + " " +
+                (node.w / 2) + "," + (-node.h / 2) + " " +
+                (node.w / 2 - skew) + "," + (node.h / 2) + " " +
+                (-node.w / 2) + "," + (node.h / 2));
+        } else {
+            shape = svgEl("rect");
+            shape.setAttribute("x", -node.w / 2);
+            shape.setAttribute("y", -node.h / 2);
+            shape.setAttribute("width", node.w);
+            shape.setAttribute("height", node.h);
+            if (node.shape === "stadium") {
+                shape.setAttribute("rx", node.h / 2);
+                shape.setAttribute("ry", node.h / 2);
+            } else {
+                shape.setAttribute("rx", 4);
+                shape.setAttribute("ry", 4);
+            }
+        }
+        shape.setAttribute("class", "fc-shape");
+        g.appendChild(shape);
+
+        var text = svgEl("text");
+        text.setAttribute("x", 0);
+        text.setAttribute("y", 0);
+        text.setAttribute("dominant-baseline", "middle");
+        var lines = flowDisplayLines(node.label);
+        var start = -((lines.length - 1) * 16) / 2;
+        lines.forEach(function (line, i) {
+            var tspan = svgEl("tspan");
+            tspan.setAttribute("x", 0);
+            tspan.setAttribute("y", start + i * 16);
+            tspan.textContent = line;
+            text.appendChild(tspan);
+        });
+        g.appendChild(text);
+
+        // 四个连接端口
+        [[0, -node.h / 2], [node.w / 2, 0], [0, node.h / 2], [-node.w / 2, 0]]
+            .forEach(function (pos) {
+                var port = svgEl("circle");
+                port.setAttribute("class", "fc-port");
+                port.setAttribute("cx", pos[0]);
+                port.setAttribute("cy", pos[1]);
+                port.setAttribute("r", 5);
+                port.setAttribute("data-port", "1");
+                g.appendChild(port);
+            });
+
+        g.addEventListener("pointerdown", function (e) { onFlowNodePointerDown(e, node, g); });
+        g.addEventListener("dblclick", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectFlowNode(node.id);
+            mermaidLabelInput.focus();
+            mermaidLabelInput.select();
+        });
+        mermaidNodeLayer.appendChild(g);
+        return g;
+    }
+
+    function renderFlowGraph() {
+        renderFlowEdges();
+        mermaidNodeLayer.innerHTML = "";
+        flowNodes.forEach(renderFlowNode);
+        refreshFlowSelection();
+    }
+
+    function refreshFlowSelection() {
+        if (!mermaidNodeLayer) return;
+        var nodes = mermaidNodeLayer.querySelectorAll(".fc-node");
+        for (var i = 0; i < nodes.length; i++) {
+            var id = nodes[i].getAttribute("data-node-id");
+            nodes[i].classList.toggle("selected",
+                !!(flowSelected && flowSelected.type === "node" && flowSelected.id === id));
+        }
+        var edges = mermaidEdgeLayer.querySelectorAll(".fc-edge");
+        for (var j = 0; j < edges.length; j++) {
+            var eid = edges[j].getAttribute("data-edge-id");
+            edges[j].classList.toggle("selected",
+                !!(flowSelected && flowSelected.type === "edge" && flowSelected.id === eid));
+        }
+    }
+
+    function showFlowProps() {
+        if (!mermaidProps || !flowSelected) {
+            if (mermaidProps) mermaidProps.hidden = true;
+            return;
+        }
+        if (flowSelected.type === "node") {
+            var node = flowNodeById(flowSelected.id);
+            if (!node) { mermaidProps.hidden = true; return; }
+            mermaidPropsTitle.textContent = "节点属性";
+            mermaidShapeField.hidden = false;
+            mermaidLabelInput.value = node.label;
+            mermaidShapeSelect.value = node.shape;
+        } else {
+            var edge = flowEdgeById(flowSelected.id);
+            if (!edge) { mermaidProps.hidden = true; return; }
+            mermaidPropsTitle.textContent = "连线属性";
+            mermaidShapeField.hidden = true;
+            mermaidLabelInput.value = edge.label || "";
+        }
+        mermaidProps.hidden = false;
+    }
+
+    function selectFlowNode(id) {
+        flowSelected = { type: "node", id: id };
+        refreshFlowSelection();
+        showFlowProps();
+    }
+
+    function selectFlowEdge(id) {
+        flowSelected = { type: "edge", id: id };
+        refreshFlowSelection();
+        showFlowProps();
+    }
+
+    function clearFlowSelection() {
+        flowSelected = null;
+        refreshFlowSelection();
+        showFlowProps();
+    }
+
+    function flowCanvasPoint(e) {
+        var point = mermaidCanvas.createSVGPoint();
+        point.x = e.clientX;
+        point.y = e.clientY;
+        return point.matrixTransform(mermaidCanvas.getScreenCTM().inverse());
+    }
+
+    function flowNodeElement(id) {
+        var nodes = mermaidNodeLayer.querySelectorAll(".fc-node");
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i].getAttribute("data-node-id") === id) return nodes[i];
+        }
+        return null;
+    }
+
+    function onFlowNodePointerDown(e, node, group) {
+        if (e.button !== undefined && e.button !== 0) return;
+        var port = e.target && e.target.closest ? e.target.closest(".fc-port") : null;
+        if (port) {
+            e.preventDefault();
+            e.stopPropagation();
+            startFlowConnect(node, e);
+            return;
+        }
+        e.preventDefault();
+        selectFlowNode(node.id);
+        var pt = flowCanvasPoint(e);
+        flowDrag = {
+            node: node,
+            group: group,
+            offsetX: node.x - pt.x,
+            offsetY: node.y - pt.y,
+            moved: false
+        };
+
+        function onMove(ev) {
+            if (!flowDrag) return;
+            var p = flowCanvasPoint(ev);
+            var halfW = node.w / 2 + 6;
+            var halfH = node.h / 2 + 6;
+            node.x = Math.max(halfW, Math.min(1200 - halfW, p.x + flowDrag.offsetX));
+            node.y = Math.max(halfH, Math.min(800 - halfH, p.y + flowDrag.offsetY));
+            group.setAttribute("transform", "translate(" + node.x + " " + node.y + ")");
+            renderFlowEdges();
+            flowDrag.moved = true;
+        }
+
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            if (flowDrag && flowDrag.moved) syncFlowSource();
+            flowDrag = null;
+        }
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    function startFlowConnect(node, e) {
+        var pt = flowCanvasPoint(e);
+        flowConnect = { from: node.id, x: pt.x, y: pt.y };
+        flowTempPath = svgEl("path");
+        flowTempPath.setAttribute("class", "fc-temp-edge");
+        flowTempPath.setAttribute("d", "M " + node.x + " " + node.y + " L " + pt.x + " " + pt.y);
+        mermaidEdgeLayer.appendChild(flowTempPath);
+
+        function onMove(ev) {
+            if (!flowConnect || !flowTempPath) return;
+            var p = flowCanvasPoint(ev);
+            flowTempPath.setAttribute("d",
+                "M " + node.x + " " + node.y + " L " + p.x + " " + p.y);
+        }
+
+        function onUp(ev) {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            var target = document.elementFromPoint(ev.clientX, ev.clientY);
+            var targetGroup = target && target.closest ? target.closest(".fc-node") : null;
+            if (flowConnect && targetGroup) {
+                var to = targetGroup.getAttribute("data-node-id");
+                if (to && to !== flowConnect.from) {
+                    addFlowEdgeRaw(flowConnect.from, to, "");
+                    syncFlowSource();
+                }
+            }
+            if (flowTempPath && flowTempPath.parentNode) flowTempPath.parentNode.removeChild(flowTempPath);
+            flowTempPath = null;
+            flowConnect = null;
+            renderFlowGraph();
+        }
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    function deleteFlowSelection() {
+        if (!flowSelected) return;
+        if (flowSelected.type === "node") {
+            flowNodes = flowNodes.filter(function (n) { return n.id !== flowSelected.id; });
+            flowEdges = flowEdges.filter(function (e) {
+                return e.from !== flowSelected.id && e.to !== flowSelected.id;
+            });
+        } else {
+            flowEdges = flowEdges.filter(function (e) { return e.id !== flowSelected.id; });
+        }
+        flowSelected = null;
+        mermaidProps.hidden = true;
+        renderFlowGraph();
+        syncFlowSource();
+    }
+
+    function addFlowNodeFromToolbar(shape) {
+        var label = shape === "diamond" ? "判断" : shape === "stadium" ? "开始" : "新节点";
+        var index = flowNodes.length;
+        var x = 500;
+        var y = 90 + (index % 6) * 110;
+        if (index >= 6) x = 720;
+        var node = addFlowNodeRaw(label, shape, x, y);
+        flowSelected = { type: "node", id: node.id };
+        renderFlowGraph();
+        showFlowProps();
+        syncFlowSource();
+    }
+
+    function autoLayoutFlow() {
+        layoutFlowNodes(false);
+        renderFlowGraph();
+        syncFlowSource();
+    }
+
+    function setMermaidTab(mode, skipParse) {
+        if (mode === "visual" && !skipParse) {
+            if (!importFlowGraph(mermaidSource.value)) {
+                mermaidEditorHint.textContent =
+                    "当前源码包含图形编辑器暂不支持的语法（如 subgraph/样式），请继续使用源码模式";
+                mode = "source";
+            }
+        }
+        if (mode === "source" && mermaidTab === "visual" && !skipParse) {
+            syncFlowSource();
+        }
+        mermaidTab = mode;
+        mermaidVisualPane.hidden = mode !== "visual";
+        mermaidSourcePane.hidden = mode !== "source";
+        mermaidTabVisual.classList.toggle("active", mode === "visual");
+        mermaidTabSource.classList.toggle("active", mode === "source");
+        if (mode === "visual") {
+            if (flowDirection) mermaidDirection.value = flowDirection;
+            renderFlowGraph();
+            showFlowProps();
+            mermaidEditorHint.textContent = "拖动节点移动；从节点边缘圆点拖到另一个节点连线；Ctrl+Enter 应用 · Esc 取消";
+        } else {
+            updateMermaidPreview();
+            mermaidEditorHint.textContent = "源码模式：Ctrl+Enter 应用 · Esc 取消";
+        }
     }
 
     function updateMermaidPreview() {
@@ -636,6 +1332,7 @@
         }
     }
 
+
     /* 按第 N 个 mermaid 代码块替换源码（N 从 0 开始，与渲染顺序一致） */
     function replaceMermaidBlock(index, source) {
         var text = cm.getValue();
@@ -654,29 +1351,134 @@
         return false;
     }
 
-    function applyMermaidEditor() {
-        var source = mermaidSource.value.trim();
-        if (!source) {
-            postMessage({ type: "status", text: "Mermaid 源码不能为空" });
-            return;
-        }
+    function commitMermaidEditor(source) {
         if (mermaidEditIndex === null) {
             insertTextAtCursor("```mermaid\n" + source + "\n```\n");
-        } else if (!replaceMermaidBlock(mermaidEditIndex, source)) {
+            closeMermaidEditor();
+            return;
+        }
+        if (!replaceMermaidBlock(mermaidEditIndex, source)) {
+            mermaidApplying = false;
             postMessage({ type: "status", text: "未找到对应的 mermaid 代码块，可能已被外部修改" });
             return;
         }
         closeMermaidEditor();
     }
 
+    function applyMermaidEditor() {
+        if (mermaidApplying) return;
+        if (mermaidTab === "visual") syncFlowSource();
+        var source = mermaidSource.value.trim();
+        if (!source) {
+            postMessage({ type: "status", text: "Mermaid 源码不能为空" });
+            return;
+        }
+        if (source.indexOf("```") >= 0) {
+            if (mermaidTab !== "source") setMermaidTab("source", true);
+            mermaidEditorHint.textContent = "Mermaid 源码中不能包含 ``` 代码围栏，请删除围栏后再应用";
+            return;
+        }
+        mermaidApplying = true;
+        var fail = function (err) {
+            mermaidApplying = false;
+            if (mermaidEditor.hidden) return;
+            if (mermaidTab !== "source") setMermaidTab("source", true);
+            mermaidEditorHint.textContent = "Mermaid 语法错误：" +
+                String(err && err.message || err).split("\n")[0];
+            updateMermaidPreview();
+        };
+        var check;
+        try {
+            if (window.mermaid && window.mermaid.parse) {
+                try {
+                    window.mermaid.initialize({
+                        startOnLoad: false,
+                        securityLevel: "strict",
+                        theme: mermaidThemeName(),
+                        flowchart: { htmlLabels: true, useMaxWidth: true }
+                    });
+                } catch (e) { /* 初始化失败时仍尝试解析 */ }
+                check = window.mermaid.parse(source);
+            } else {
+                check = true;
+            }
+        } catch (err) {
+            fail(err);
+            return;
+        }
+        if (check && typeof check.then === "function") {
+            check.then(function () {
+                if (!mermaidApplying || mermaidEditor.hidden) return;
+                mermaidApplying = false;
+                commitMermaidEditor(source);
+            }, fail);
+        } else {
+            mermaidApplying = false;
+            commitMermaidEditor(source);
+        }
+    }
+
     if (mermaidEditor) {
         document.getElementById("mermaid-editor-close").addEventListener("click", closeMermaidEditor);
         document.getElementById("mermaid-editor-cancel").addEventListener("click", closeMermaidEditor);
         document.getElementById("mermaid-editor-apply").addEventListener("click", applyMermaidEditor);
+        mermaidTabVisual.addEventListener("click", function () { setMermaidTab("visual"); });
+        mermaidTabSource.addEventListener("click", function () { setMermaidTab("source"); });
+
         mermaidSource.addEventListener("input", function () {
+            if (mermaidTab !== "source") return;
             if (mermaidPreviewTimer) clearTimeout(mermaidPreviewTimer);
             mermaidPreviewTimer = setTimeout(updateMermaidPreview, 250);
         });
+
+        mermaidDirection.addEventListener("change", function () {
+            flowDirection = mermaidDirection.value || "TD";
+            syncFlowSource();
+        });
+
+        mermaidCanvas.addEventListener("pointerdown", function (e) {
+            if (e.target === mermaidCanvas || e.target === mermaidNodeLayer ||
+                e.target === mermaidEdgeLayer) {
+                clearFlowSelection();
+            }
+        });
+
+        document.querySelectorAll(".mermaid-shape-grid button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                addFlowNodeFromToolbar(btn.getAttribute("data-shape") || "rect");
+            });
+        });
+        document.getElementById("mermaid-autolayout").addEventListener("click", autoLayoutFlow);
+
+        mermaidLabelInput.addEventListener("input", function () {
+            if (!flowSelected) return;
+            if (flowSelected.type === "node") {
+                var node = flowNodeById(flowSelected.id);
+                if (!node) return;
+                node.label = mermaidLabelInput.value || "节点";
+                sizeFlowNode(node);
+                renderFlowGraph();
+            } else {
+                var edge = flowEdgeById(flowSelected.id);
+                if (!edge) return;
+                edge.label = mermaidLabelInput.value;
+                renderFlowEdges();
+            }
+            syncFlowSource();
+        });
+
+        mermaidShapeSelect.addEventListener("change", function () {
+            if (!flowSelected || flowSelected.type !== "node") return;
+            var node = flowNodeById(flowSelected.id);
+            if (!node) return;
+            node.shape = mermaidShapeSelect.value || "rect";
+            sizeFlowNode(node);
+            renderFlowGraph();
+            syncFlowSource();
+        });
+
+        mermaidDeleteSelection.addEventListener("click", deleteFlowSelection);
+
         mermaidEditor.addEventListener("keydown", function (e) {
             if (e.key === "Escape") {
                 e.preventDefault();
@@ -686,6 +1488,14 @@
                 e.preventDefault();
                 e.stopPropagation();
                 applyMermaidEditor();
+            } else if ((e.key === "Delete" || e.key === "Backspace") &&
+                mermaidTab === "visual" && flowSelected) {
+                var tag = e.target && e.target.tagName;
+                if (tag !== "INPUT" && tag !== "SELECT" && tag !== "TEXTAREA") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    deleteFlowSelection();
+                }
             }
         });
         mermaidEditor.addEventListener("click", function (e) {
