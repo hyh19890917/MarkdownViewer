@@ -4,7 +4,7 @@
 
 一个独立、轻量的 Markdown 阅读与编辑器，带目录（TOC）、分栏实时预览，以及浅色 / 护眼绿 / 暗黑三套主题。
 
-> **当前版本**：1.5.0 ｜ **发布日期**：2026-10-31 ｜ **作者**：tobegmup
+> **当前版本**：1.6.0 ｜ **发布日期**：2026-10-31 ｜ **作者**：tobegmup
 >
 > **开源协议**：本项目以 [GNU GPL v3](LICENSE) 发布。第三方组件（markdown-it、CodeMirror、WebView2 等）版权声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
@@ -13,7 +13,7 @@
 | 方式 | 做法 | 说明 |
 |------|------|------|
 | **绿色版**（免安装） | 下载仓库中的 `publish/` 文件夹，**整个文件夹**拷贝到任意目录，双击 `MarkdownViewer.exe` | 不写注册表、不建快捷方式、不关联文件类型；删文件夹即卸载。需 .NET 8 Desktop Runtime |
-| **安装包** | `Setup/MarkdownViewer-Setup-1.5.0.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
+| **安装包** | `Setup/MarkdownViewer-Setup-1.6.0.exe` 与 `Setup/payload.zip` **放在同一目录**后运行 | 自包含 .NET 运行时，可选快捷方式、`.md` 关联与卸载项 |
 
 详见下文「[绿色版](#绿色版免安装直接拷贝使用)」与「[安装包](#安装包安装器--payloadzip)」。
 
@@ -54,12 +54,17 @@
   - **图形模式**：节点面板（开始/结束、处理、判断、连接点）、拖拽移动、从节点边缘圆点拖拽连线、双击节点或属性面板修改文字/形状、自动排列、方向切换；节点文字支持引号、反斜杠、反引号等特殊字符（自动转义）
   - **源码模式**：直接编辑 Mermaid 语法并实时预览；复杂语法（subgraph/样式）自动回退到源码模式；应用前自动校验语法，错误时保留弹窗并提示
   - 应用后写回对应代码块；导出 HTML 保留 SVG
-- **可拖动 / 缩放弹窗**：流程图、表格与 UI 布局编辑弹窗均可拖动标题栏移动、拖动边缘或右下角缩放；双击标题栏恢复默认大小
-- **UI 布局设计器**：用 ` ```ui ` 代码块保存界面设计描述（JSON），在可视化画布上直接搭建页面；功能区「编辑 → 插入 UI 布局」新建，点击预览右上角「编辑」或双击布局再次打开
-  - 内置 21 种组件：页面、导航栏、侧边栏、内容区、卡片、按钮、输入框、表单、标题、文本、图片、头像、表格、列表、3D 模型、3D 空间、文件浏览器、数据库、动画、Canvas、GIF
-  - 拖拽移动、拖动四角缩放、方向键微调（Shift 加速）、Delete 删除；右侧属性面板修改文字、图片/资源路径、备注与精确坐标尺寸
-  - 画布尺寸可调整为 320×240 ~ 1920×1200；应用后写回对应 ` ```ui ` 代码块，预览区按 JSON 自动渲染线框图
-  - 3D 模型、3D 空间、文件浏览器、数据库、动画、Canvas、GIF 等目前为**线框占位**，用于表达布局；图片/GIF 配置 `props.src` 后可显示真实资源
+- **可拖动 / 缩放弹窗**：流程图、表格与 UI 原型编辑弹窗均可拖动标题栏移动、拖动边缘或右下角缩放；双击标题栏恢复默认大小
+- **UI 原型设计器（多页面 / 窗口 / 交互）**：用 ` ```ui ` 代码块保存可运行的界面原型（JSON v2），预览区直接渲染成**可操作的多窗口应用**，不是静态线框图；功能区「编辑 → 插入 UI 原型」新建，点击预览右上角「编辑」或双击原型再次打开
+  - **多页面 / 多窗口**：顶部页面标签可新建、切换、改名、删除；每个页面可设置窗口类型（普通窗口 / 对话框）、所属窗口、初始打开、启动页、初始 X/Y；窗口归属形成层级，关闭父窗口会连带关闭子窗口，打开子窗口会自动打开父窗口
+  - **容器层级**：页面、导航栏、侧边栏、内容区、卡片、表单可包含子组件，包含规则由类型约束（例如表单只接受输入框/按钮/标题等）；选中容器再添加组件会自动放入容器；右侧「所属容器」可重新归属；移动父容器会带动所有子组件，删除父容器会递归删除子组件；左侧「层级结构」显示完整树
+  - **真实交互控件**：按钮可点击，输入框可输入并触发 `change`，表单带必填校验与提交，表格支持表头排序/行选择，列表/文件浏览器可选择，数据库支持关键字过滤和 JSON 数据源 URL 加载，3D 模型支持 `.obj` / `.stl` 文件加载、拖动旋转与滚轮缩放，动画可播放/暂停/调速，Canvas 可直接绘图（颜色/笔刷/清空），GIF/图片可显示真实资源并打开灯箱，头像、导航栏、侧边栏均可用
+  - **交互 / 逻辑连线**：每个控件可配置多个交互：触发事件（点击 / 内容改变 / 提交 / 选择）× 动作（打开窗口 / 关闭窗口 / 切换页面 / 显示隐藏 / 聚焦 / 设置文字 / 提示 / 返回上级）；点击「逻辑连线」显示控件到目标控件/窗口的 SVG 连线与窗口归属虚线，开启「开始连线」后依次点击源控件和目标控件/页面标签即可创建
+  - **预览运行**：预览区窗口可拖动、置顶、关闭；右上角「重置」恢复初始打开的窗口；所有交互状态在预览内即时生效
+  - **组件集合**：页面、导航栏、侧边栏、内容区、卡片、按钮、输入框、表单、标题、文本、图片、头像、表格、列表、3D 模型、3D 空间、文件浏览器、数据库、动画、Canvas、GIF
+  - **说明**：数据库数据源需返回 JSON 数组（受浏览器 CORS 限制）；文件浏览器为按 `props.items` 配置的模拟文件列表；3D 未配置 `props.src` 时回退为可旋转的占位立方体；导出的 HTML 是静态快照，交互脚本不随导出分发
+  - **示例**：仓库根目录的 `demo-ui.md` 是一个可直接打开的登录 → 控制台 → 订单详情多窗口原型，`demo-assets/cube.obj` 为示例 3D 模型
+
 - **缩放与字号**：`Ctrl+滚轮`、`Ctrl+=` / `Ctrl+-` / `Ctrl+0` 调整正文与编辑器字号并记忆
 - **打字机模式**：编辑时光标行始终居中（视图菜单开关）
 - **图片**：预览里点击图片弹出灯箱；编辑器内**粘贴/拖入图片**自动存到文档同级 `assets/` 并插入链接；菜单可插入本地图片
@@ -83,6 +88,69 @@
 - md 中相对路径图片可正常显示（文件所在目录映射为 `https://mdfile.local/`）
 - 预览中点击页内锚点平滑跳转；点击相对路径的 `.md` 链接会作为新标签打开，其它文档/图片交给系统默认程序，可执行文件等高风险类型会先弹出确认
 - 外链交给系统浏览器打开（WebView 不会离开应用页面）；导出 HTML 时自动把相对图片改为 `file:///` 绝对路径
+
+## UI 原型 JSON 结构
+
+` ```ui ` 代码块保存的是可运行原型的完整描述，可直接手写或由设计器生成：
+
+```json
+{
+  "version": 2,
+  "start": "p1",
+  "pages": [
+    {
+      "id": "p1",
+      "name": "主窗口",
+      "kind": "window",
+      "parentId": "",
+      "open": true,
+      "x": 24,
+      "y": 24,
+      "width": 960,
+      "height": 600,
+      "elements": [
+        {
+          "id": "e1",
+          "type": "button",
+          "parentId": "",
+          "x": 40,
+          "y": 40,
+          "w": 140,
+          "h": 38,
+          "text": "打开详情",
+          "props": { "variant": "primary" }
+        }
+      ]
+    },
+    {
+      "id": "p2",
+      "name": "详情窗口",
+      "kind": "dialog",
+      "parentId": "p1",
+      "open": false,
+      "width": 420,
+      "height": 260,
+      "elements": []
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "e1",
+      "event": "click",
+      "action": "open",
+      "target": "p2",
+      "value": ""
+    }
+  ]
+}
+```
+
+- `pages[].kind`：`window` 普通窗口 / `dialog` 对话框
+- `pages[].parentId`：窗口归属，子窗口关闭受父窗口控制
+- `elements[].parentId`：组件所属容器（页面、导航栏、侧边栏、内容区、卡片、表单）
+- `connections[].event`：`click` / `change` / `submit` / `select`
+- `connections[].action`：`open` / `close` / `navigate` / `toggle` / `show` / `hide` / `focus` / `setText` / `alert` / `back`
 
 ## 目录结构
 
@@ -120,7 +188,7 @@ markdownviewer/
 │   ├── MarkdownViewer.exe           # 双击直接运行
 │   └── WebAssets/ runtimes/ ...     # 需与 exe 保持同级目录结构
 ├── Setup/
-│   ├── MarkdownViewer-Setup-1.5.0.exe   # 安装器（自包含 .NET 运行时，<100MB）
+│   ├── MarkdownViewer-Setup-1.6.0.exe   # 安装器（自包含 .NET 运行时，<100MB）
 │   └── payload.zip                      # 主程序载荷，安装时复制到安装目录
 ├── LICENSE                          # GNU GPL v3 许可证
 ├── THIRD-PARTY-NOTICES.md           # 第三方组件版权声明
@@ -159,7 +227,7 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 
 安装包由**两个文件**组成，必须放在同一目录：
 
-- `Setup\MarkdownViewer-Setup-1.5.0.exe`：安装器（自包含 .NET 运行时，约 70MB）
+- `Setup\MarkdownViewer-Setup-1.6.0.exe`：安装器（自包含 .NET 运行时，约 70MB）
 - `Setup\payload.zip`：主程序载荷（约 66MB）
 
 > 安装器不再把载荷内嵌到自身，避免单文件超过 GitHub 100MB 限制。安装时从安装器所在目录读取 `payload.zip` 并解压到用户选择的安装目录；如果缺少该文件，安装器会提示两者需放在同一目录。
@@ -171,8 +239,8 @@ dotnet publish MarkdownViewer\MarkdownViewer.csproj -c Release -r win-x64 `
 - 写入「设置 → 应用 → 已安装的应用」卸载条目，支持完整卸载（含文件、快捷方式、关联清理）；卸载路径从注册表读取，自定义目录也能正确清理
 - 覆盖安装时若旧版本位于其他目录，会自动迁移 `userdata` 并清理旧目录
 - **升级安全**：先把 `payload.zip` 解压到临时目录并校验主程序存在，确认无误后才清理旧版本；解压/复制失败不会先把旧安装删一半；升级保留 `userdata`（设置、会话、草稿），卸载时才清理
-- 静默安装/卸载：`MarkdownViewer-Setup-1.5.0.exe /silent`、`Uninstall.exe /uninstall /silent`
-- 指定目录静默安装：`MarkdownViewer-Setup-1.5.0.exe /silent /DIR="D:\Apps\MarkdownViewer"`
+- 静默安装/卸载：`MarkdownViewer-Setup-1.6.0.exe /silent`、`Uninstall.exe /uninstall /silent`
+- 指定目录静默安装：`MarkdownViewer-Setup-1.6.0.exe /silent /DIR="D:\Apps\MarkdownViewer"`
 
 ### 重新构建安装包
 
@@ -187,7 +255,7 @@ Compress-Archive -Path build-payload\* -DestinationPath Installer\payload.zip -F
 dotnet publish Installer\Installer.csproj -c Release -r win-x64 `
   --self-contained true -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true -o build-setup
-Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.5.0.exe -Force
+Copy-Item build-setup\MarkdownViewer-Setup.exe Setup\MarkdownViewer-Setup-1.6.0.exe -Force
 Copy-Item Installer\payload.zip Setup\payload.zip -Force
 ```
 

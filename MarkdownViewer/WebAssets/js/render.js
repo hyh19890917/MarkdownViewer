@@ -50,6 +50,8 @@
     var uiPropsEmpty = document.getElementById("ui-props-empty");
     var uiPropsFields = document.getElementById("ui-props-fields");
     var uiPropType = document.getElementById("ui-prop-type");
+    var uiPropParent = document.getElementById("ui-prop-parent");
+    var uiPropExtra = document.getElementById("ui-prop-extra");
     var uiPropText = document.getElementById("ui-prop-text");
     var uiPropSrc = document.getElementById("ui-prop-src");
     var uiPropNote = document.getElementById("ui-prop-note");
@@ -59,6 +61,22 @@
     var uiPropH = document.getElementById("ui-prop-h");
     var uiCanvasWidth = document.getElementById("ui-canvas-width");
     var uiCanvasHeight = document.getElementById("ui-canvas-height");
+    var uiPageTabs = document.getElementById("ui-page-tabs");
+    var uiPageAdd = document.getElementById("ui-page-add");
+    var uiPageProps = document.getElementById("ui-page-props");
+    var uiPageName = document.getElementById("ui-page-name");
+    var uiPageKind = document.getElementById("ui-page-kind");
+    var uiPageParent = document.getElementById("ui-page-parent");
+    var uiPageX = document.getElementById("ui-page-x");
+    var uiPageY = document.getElementById("ui-page-y");
+    var uiPageOpen = document.getElementById("ui-page-open");
+    var uiPageStart = document.getElementById("ui-page-start");
+    var uiPageDelete = document.getElementById("ui-page-delete");
+    var uiStructure = document.getElementById("ui-structure");
+    var uiLogicToggle = document.getElementById("ui-logic-toggle");
+    var uiConnectToggle = document.getElementById("ui-connect-toggle");
+    var uiInteractions = document.getElementById("ui-interactions");
+    var uiAddInteractionBtn = document.getElementById("ui-add-interaction");
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -431,9 +449,16 @@
     var dialogRects = Object.create(null);
     var dialogClickSuppressUntil = 0;
     var uiEditIndex = null;
+    var uiDoc = null;
     var uiLayout = null;
     var uiSelectedId = null;
     var uiElementSeq = 0;
+    var uiPageSeq = 0;
+    var uiConnSeq = 0;
+    var uiCurrentPageId = null;
+    var uiLogicOn = false;
+    var uiConnectMode = false;
+    var uiConnectFrom = null;
     var uiDrag = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
@@ -2060,6 +2085,14 @@
         canvas: "Canvas", gif: "GIF"
     };
 
+    var UI_TYPE_ICONS = {
+        page: "▭", navbar: "☰", sidebar: "▤", content: "▦", card: "▢",
+        button: "◉", input: "▭", form: "▤", heading: "H", text: "¶",
+        image: "▧", avatar: "○", table: "▦", list: "☷",
+        model3d: "◈", scene3d: "⬡", filebrowser: "▣", database: "▤",
+        animation: "▶", canvas: "▨", gif: "GIF"
+    };
+
     var UI_DEFAULT_SIZE = {
         page: [960, 600], navbar: [960, 56], sidebar: [220, 544],
         content: [740, 544], card: [260, 160], button: [120, 40],
@@ -2069,6 +2102,37 @@
         scene3d: [320, 200], filebrowser: [300, 200], database: [240, 160],
         animation: [260, 160], canvas: [280, 180], gif: [240, 160]
     };
+
+    var UI_PAGE_KINDS = { window: "窗口", dialog: "对话框" };
+    var UI_EVENTS = ["click", "change", "submit", "select"];
+    var UI_ACTIONS = ["open", "close", "navigate", "toggle", "show", "hide", "focus", "setText", "alert", "back"];
+    var UI_ACTION_LABELS = {
+        open: "打开窗口", close: "关闭窗口", navigate: "切换页面", toggle: "显示/隐藏",
+        show: "显示", hide: "隐藏", focus: "聚焦", setText: "设置文字",
+        alert: "提示消息", back: "返回上级"
+    };
+    var UI_EVENT_LABELS = { click: "点击", change: "内容改变", submit: "提交", select: "选择" };
+
+    var UI_ALL_CHILD_TYPES = Object.keys(UI_TYPE_LABELS).filter(function (t) { return t !== "page"; });
+    var UI_CONTAINER_RULES = {
+        page: UI_ALL_CHILD_TYPES,
+        navbar: ["button", "input", "heading", "text", "avatar", "image", "list"],
+        sidebar: ["button", "input", "heading", "text", "avatar", "image", "list", "filebrowser"],
+        content: UI_ALL_CHILD_TYPES,
+        card: ["button", "input", "form", "heading", "text", "image", "avatar", "table", "list",
+            "model3d", "scene3d", "filebrowser", "database", "animation", "canvas", "gif"],
+        form: ["input", "button", "heading", "text", "avatar"]
+    };
+
+    function uiIsContainerType(type) {
+        return Object.prototype.hasOwnProperty.call(UI_CONTAINER_RULES, type);
+    }
+
+    function uiCanContain(parentType, childType) {
+        if (!parentType) return childType !== "page";
+        var allowed = UI_CONTAINER_RULES[parentType];
+        return !!allowed && allowed.indexOf(childType) >= 0;
+    }
 
     function uiClamp(value, min, max, fallback) {
         var n = Number(value);
@@ -2085,7 +2149,111 @@
         return max;
     }
 
-    function normalizeUiLayout(raw) {
+    function uiMaxElementSeqForDoc(doc) {
+        var max = 0;
+        (doc && doc.pages || []).forEach(function (page) {
+            max = Math.max(max, uiMaxElementSeq(page.elements));
+        });
+        return max;
+    }
+
+    function uiMaxPageSeq(doc) {
+        var max = 0;
+        (doc && doc.pages || []).forEach(function (page) {
+            var m = /^p(\d+)$/.exec(String(page.id || ""));
+            if (m) max = Math.max(max, parseInt(m[1], 10));
+        });
+        return max;
+    }
+
+    function uiCloneProps(source) {
+        var out = {};
+        if (!source || typeof source !== "object") return out;
+        Object.keys(source).forEach(function (key) {
+            var value = source[key];
+            if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+                out[key] = value;
+            } else if (Array.isArray(value)) {
+                out[key] = value.map(function (item) {
+                    return typeof item === "string" || typeof item === "number" ? item : String(item);
+                });
+            }
+        });
+        return out;
+    }
+
+    function uiFindPage(doc, pageId) {
+        if (!doc || !pageId) return null;
+        for (var i = 0; i < doc.pages.length; i++) {
+            if (doc.pages[i].id === pageId) return doc.pages[i];
+        }
+        return null;
+    }
+
+    function uiFindElement(page, elementId) {
+        if (!page || !elementId) return null;
+        for (var i = 0; i < page.elements.length; i++) {
+            if (page.elements[i].id === elementId) return page.elements[i];
+        }
+        return null;
+    }
+
+    function uiFindElementAnywhere(doc, elementId) {
+        if (!doc || !elementId) return null;
+        for (var i = 0; i < doc.pages.length; i++) {
+            var el = uiFindElement(doc.pages[i], elementId);
+            if (el) return { page: doc.pages[i], element: el };
+        }
+        return null;
+    }
+
+    function uiPageDescendants(doc, pageId) {
+        var result = [];
+        var frontier = [pageId];
+        while (frontier.length) {
+            var current = frontier.shift();
+            doc.pages.forEach(function (page) {
+                if (page.parentId === current && result.indexOf(page) < 0) {
+                    result.push(page);
+                    frontier.push(page.id);
+                }
+            });
+        }
+        return result;
+    }
+
+    function uiElementDescendants(page, elementId) {
+        var result = [];
+        var frontier = [elementId];
+        while (frontier.length) {
+            var current = frontier.shift();
+            page.elements.forEach(function (el) {
+                if (el.parentId === current && result.indexOf(el) < 0) {
+                    result.push(el);
+                    frontier.push(el.id);
+                }
+            });
+        }
+        return result;
+    }
+
+    function uiElementDepth(page, el, guard) {
+        if (!el.parentId) return 0;
+        guard = guard || 0;
+        if (guard > 32) return 0;
+        var parent = uiFindElement(page, el.parentId);
+        return parent ? uiElementDepth(page, parent, guard + 1) + 1 : 0;
+    }
+
+    function uiSortedElements(page) {
+        return page.elements.map(function (el, index) {
+            return { el: el, index: index, depth: uiElementDepth(page, el) };
+        }).sort(function (a, b) {
+            return a.depth - b.depth || a.index - b.index;
+        }).map(function (item) { return item.el; });
+    }
+
+    function uiNormalizePage(raw) {
         if (!raw || typeof raw !== "object") return null;
         var width = Math.round(uiClamp(raw.width, 320, 1920, 960));
         var height = Math.round(uiClamp(raw.height, 240, 1200, 600));
@@ -2106,28 +2274,1303 @@
             if (!id || usedIds[id]) id = "e" + (index + 1);
             while (usedIds[id]) id = "e" + (++index + 1);
             usedIds[id] = true;
-            var props = item.props && typeof item.props === "object" ? item.props : {};
-            var el = {
+            var props = uiCloneProps(item.props);
+            elements.push({
                 id: id,
                 type: item.type,
+                parentId: String(item.parentId || "").trim(),
                 x: x, y: y, w: w, h: h,
                 text: String(item.text == null ? "" : item.text),
-                props: {
-                    src: String(props.src == null ? "" : props.src),
-                    note: String(props.note == null ? "" : props.note)
-                }
-            };
-            elements.push(el);
+                props: props
+            });
         });
-        return { width: width, height: height, elements: elements };
+
+        elements.forEach(function (el) {
+            if (!el.parentId) return;
+            var parent = uiFindElement({ elements: elements }, el.parentId);
+            if (!parent || parent === el || !uiIsContainerType(parent.type) ||
+                !uiCanContain(parent.type, el.type)) {
+                el.parentId = "";
+                return;
+            }
+            var chain = [el];
+            var cursor = parent;
+            var guard = 0;
+            while (cursor && guard++ < 64) {
+                if (chain.indexOf(cursor) >= 0) {
+                    el.parentId = "";
+                    break;
+                }
+                chain.push(cursor);
+                cursor = cursor.parentId ? uiFindElement({ elements: elements }, cursor.parentId) : null;
+            }
+        });
+
+        return {
+            id: String(raw.id || "").trim(),
+            name: String(raw.name || "").trim(),
+            kind: raw.kind === "dialog" ? "dialog" : "window",
+            parentId: String(raw.parentId || "").trim(),
+            open: raw.open !== false,
+            x: Math.round(Number(raw.x) || 0),
+            y: Math.round(Number(raw.y) || 0),
+            width: width,
+            height: height,
+            elements: elements
+        };
+    }
+
+    function uiNormalizeDocument(raw) {
+        if (!raw || typeof raw !== "object") return null;
+        var sourcePages = Array.isArray(raw.pages) && raw.pages.length
+            ? raw.pages
+            : (Array.isArray(raw.elements) ? [raw] : []);
+        var legacySinglePage = !Array.isArray(raw.pages) && Array.isArray(raw.elements);
+        var pages = [];
+        var usedPageIds = Object.create(null);
+        sourcePages.forEach(function (item, index) {
+            var page = uiNormalizePage(item);
+            if (!page) return;
+            if (!page.id || usedPageIds[page.id]) page.id = "p" + (index + 1);
+            while (usedPageIds[page.id]) page.id = "p" + (++index + 1);
+            usedPageIds[page.id] = true;
+            if (!page.name) page.name = legacySinglePage ? "主窗口" : ("页面 " + (index + 1));
+            if (!isFinite(Number(item.x))) page.x = 0;
+            if (!isFinite(Number(item.y))) page.y = 0;
+            if (isFinite(Number(item.x))) page.x = Math.round(Number(item.x));
+            if (isFinite(Number(item.y))) page.y = Math.round(Number(item.y));
+            pages.push(page);
+        });
+        if (!pages.length) return null;
+
+        pages.forEach(function (page) {
+            if (!page.parentId) return;
+            if (page.parentId === page.id || !uiFindPage({ pages: pages }, page.parentId)) {
+                page.parentId = "";
+                return;
+            }
+            var chain = [page];
+            var cursor = uiFindPage({ pages: pages }, page.parentId);
+            var guard = 0;
+            while (cursor && guard++ < 64) {
+                if (chain.indexOf(cursor) >= 0) {
+                    page.parentId = "";
+                    break;
+                }
+                chain.push(cursor);
+                cursor = cursor.parentId ? uiFindPage({ pages: pages }, cursor.parentId) : null;
+            }
+        });
+
+        var connections = [];
+        var usedConnIds = Object.create(null);
+        var sourceConnections = Array.isArray(raw.connections) ? raw.connections : [];
+        sourceConnections.forEach(function (item, index) {
+            if (!item || typeof item !== "object") return;
+            var from = String(item.from || "").trim();
+            var target = String(item.target || "").trim();
+            var action = UI_ACTIONS.indexOf(item.action) >= 0 ? item.action : "open";
+            if (!from || !uiFindElementAnywhere({ pages: pages }, from)) return;
+            if (["open", "navigate", "toggle", "show", "hide", "focus", "setText"].indexOf(action) >= 0 &&
+                !target) return;
+            if (target && !uiFindPage({ pages: pages }, target) &&
+                !uiFindElementAnywhere({ pages: pages }, target)) return;
+            var id = String(item.id || "").trim();
+            if (!id || usedConnIds[id]) id = "c" + (index + 1);
+            while (usedConnIds[id]) id = "c" + (++index + 1);
+            usedConnIds[id] = true;
+            connections.push({
+                id: id,
+                from: from,
+                event: UI_EVENTS.indexOf(item.event) >= 0 ? item.event : "click",
+                action: action,
+                target: target,
+                value: String(item.value == null ? "" : item.value)
+            });
+        });
+
+        var start = String(raw.start || "").trim();
+        if (!uiFindPage({ pages: pages }, start)) {
+            var firstOpen = pages.filter(function (page) { return page.open; })[0];
+            start = (firstOpen || pages[0]).id;
+        }
+
+        return { version: 2, start: start, pages: pages, connections: connections };
     }
 
     function parseUiLayout(source) {
         try {
-            return normalizeUiLayout(JSON.parse(String(source || "")));
+            return uiNormalizeDocument(JSON.parse(String(source || "")));
         } catch (e) {
             return null;
         }
+    }
+
+    function uiDocumentJson(doc) {
+        var out = {
+            version: 2,
+            start: doc.start,
+            pages: doc.pages.map(function (page) {
+                return {
+                    id: page.id,
+                    name: page.name,
+                    kind: page.kind,
+                    parentId: page.parentId || "",
+                    open: !!page.open,
+                    x: Math.round(page.x || 0),
+                    y: Math.round(page.y || 0),
+                    width: Math.round(page.width),
+                    height: Math.round(page.height),
+                    elements: uiSortedElements(page).map(function (el) {
+                        var item = {
+                            id: el.id,
+                            type: el.type,
+                            parentId: el.parentId || "",
+                            x: Math.round(el.x), y: Math.round(el.y),
+                            w: Math.round(el.w), h: Math.round(el.h),
+                            text: el.text || ""
+                        };
+                        var props = {};
+                        Object.keys(el.props || {}).forEach(function (key) {
+                            var value = el.props[key];
+                            if (value === "" || value === null || value === undefined) return;
+                            if (typeof value === "boolean" && !value) return;
+                            props[key] = value;
+                        });
+                        if (Object.keys(props).length) item.props = props;
+                        return item;
+                    })
+                };
+            }),
+            connections: doc.connections.map(function (conn) {
+                return {
+                    id: conn.id,
+                    from: conn.from,
+                    event: conn.event,
+                    action: conn.action,
+                    target: conn.target || "",
+                    value: conn.value || ""
+                };
+            })
+        };
+        return JSON.stringify(out, null, 2);
+    }
+
+    /* ===================== UI 原型运行时（预览区真实交互） ===================== */
+    function uiSplitItems(text, fallback) {
+        if (Array.isArray(text)) {
+            return text.map(function (v) { return String(v).trim(); }).filter(Boolean);
+        }
+        var source = String(text == null ? "" : text).trim();
+        if (!source) return (fallback || []).slice();
+        var parts = source.indexOf("\n") >= 0 ? source.split(/\r?\n/) : source.split(/[,，;；|]/);
+        var items = parts.map(function (v) { return String(v).trim(); }).filter(Boolean);
+        return items.length ? items : (fallback || []).slice();
+    }
+
+    function uiSplitRows(text, fallback) {
+        if (Array.isArray(text)) {
+            if (!text.length) return (fallback || []).map(function (row) { return row.slice(); });
+            return text.map(function (row) {
+                return Array.isArray(row) ? row.map(String) : [String(row)];
+            });
+        }
+        var source = String(text == null ? "" : text).trim();
+        if (!source) return (fallback || []).map(function (row) { return row.slice(); });
+        return source.split(/\r?\n/).map(function (line) {
+            var separator = line.indexOf("|") >= 0 ? "|" : (line.indexOf("\t") >= 0 ? "\t" : ",");
+            return line.split(separator).map(function (cell) { return cell.trim(); });
+        }).filter(function (row) { return row.length > 0; });
+    }
+
+    function uiDefaultTableRows() {
+        return [
+            ["名称", "状态", "负责人"],
+            ["需求评审", "进行中", "张三"],
+            ["接口联调", "待开始", "李四"],
+            ["发布上线", "未开始", "王五"]
+        ];
+    }
+
+    function uiRuntimeElementHidden(page, el, ctx) {
+        if (ctx.hidden[el.id]) return true;
+        var guard = 0;
+        var parentId = el.parentId;
+        while (parentId && guard++ < 64) {
+            if (ctx.hidden[parentId]) return true;
+            var parent = uiFindElement(page, parentId);
+            parentId = parent ? parent.parentId : "";
+        }
+        return false;
+    }
+
+    function uiRuntimePagePosition(page, index, ctx) {
+        if (ctx.positions[page.id]) return ctx.positions[page.id];
+        var left = Number(page.x) || 0;
+        var top = Number(page.y) || 0;
+        var explicit = left !== 0 || top !== 0;
+        var parent = page.parentId ? uiFindPage(ctx.doc, page.parentId) : null;
+        if (!explicit) {
+            if (parent) {
+                var parentPos = ctx.positions[parent.id] || { left: Math.max(24, Number(parent.x) || 0), top: Math.max(24, Number(parent.y) || 0) };
+                left = parentPos.left + 56;
+                top = parentPos.top + 64;
+            } else {
+                left = 24 + (index % 4) * 32;
+                top = 24 + (index % 4) * 32;
+            }
+        }
+        var pos = { left: Math.max(0, left), top: Math.max(0, top), z: 10 + index };
+        ctx.positions[page.id] = pos;
+        return pos;
+    }
+
+    function uiRuntimeOpenPage(ctx, pageId) {
+        var page = uiFindPage(ctx.doc, pageId);
+        if (!page) return false;
+        var parentId = page.parentId;
+        var guard = 0;
+        while (parentId && guard++ < 64) {
+            var parent = uiFindPage(ctx.doc, parentId);
+            if (!parent) break;
+            ctx.open[parent.id] = true;
+            parentId = parent.parentId;
+        }
+        ctx.open[page.id] = true;
+        if (ctx.positions[page.id]) ctx.positions[page.id].z = ++ctx.z;
+        return true;
+    }
+
+    function uiRuntimeClosePage(ctx, pageId) {
+        if (!uiFindPage(ctx.doc, pageId)) return false;
+        delete ctx.open[pageId];
+        uiPageDescendants(ctx.doc, pageId).forEach(function (page) {
+            delete ctx.open[page.id];
+        });
+        return true;
+    }
+
+    function uiRuntimeToast(ctx, message) {
+        var old = ctx.runtime.querySelector(".ui-rt-toast");
+        if (old) old.parentNode.removeChild(old);
+        var toast = document.createElement("div");
+        toast.className = "ui-rt-toast";
+        toast.textContent = message || "操作完成";
+        ctx.runtime.appendChild(toast);
+        setTimeout(function () {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 2400);
+    }
+
+    function uiRuntimeConnectionLabel(conn) {
+        return (UI_EVENT_LABELS[conn.event] || conn.event) + " → " + (UI_ACTION_LABELS[conn.action] || conn.action);
+    }
+
+    function uiRuntimeSubmitForm(ctx, page, form) {
+        if (!form || !page) return;
+        var fields = page.elements.filter(function (child) {
+            return child.parentId === form.id && (child.type === "input" || child.type === "text");
+        });
+        for (var i = 0; i < fields.length; i++) {
+            var field = fields[i];
+            if (field.props.required && !String(ctx.values[field.id] || field.props.value || "").trim()) {
+                uiRuntimeToast(ctx, "请填写「" + (field.text || UI_TYPE_LABELS[field.type]) + "」");
+                return;
+            }
+        }
+        var submitSources = [form].concat(page.elements.filter(function (child) {
+            return child.parentId === form.id && child.type === "button";
+        }));
+        var matched = submitSources.filter(function (source) {
+            return ctx.doc.connections.some(function (conn) {
+                return conn.from === source.id && conn.event === "submit";
+            });
+        });
+        if (matched.length) {
+            matched.forEach(function (source) { uiRuntimeRunEvent(ctx, page, source, "submit"); });
+        } else {
+            uiRuntimeToast(ctx, "表单已提交");
+        }
+    }
+
+    function uiRuntimeRunEvent(ctx, page, el, event) {
+        var connections = ctx.doc.connections.filter(function (conn) {
+            return conn.from === el.id && conn.event === event;
+        });
+        if (!connections.length) {
+            if (event === "click" && (el.type === "button" || el.type === "navbar" ||
+                el.type === "sidebar" || el.type === "image" || el.type === "gif")) {
+                uiRuntimeToast(ctx, "已点击「" + (el.text || UI_TYPE_LABELS[el.type]) + "」，可在设计器中为它添加交互");
+            }
+            return;
+        }
+        var needRender = false;
+        var focusId = null;
+        connections.forEach(function (conn) {
+            var targetPage = uiFindPage(ctx.doc, conn.target);
+            var targetInfo = targetPage ? null : uiFindElementAnywhere(ctx.doc, conn.target);
+            if (conn.action === "open" || conn.action === "navigate") {
+                if (!targetPage) {
+                    uiRuntimeToast(ctx, "交互目标页面不存在");
+                    return;
+                }
+                if (conn.action === "navigate") {
+                    uiRuntimeClosePage(ctx, page.id);
+                    uiRuntimeOpenPage(ctx, targetPage.id);
+                } else {
+                    uiRuntimeOpenPage(ctx, targetPage.id);
+                }
+                needRender = true;
+            } else if (conn.action === "close") {
+                var closeId = targetPage ? targetPage.id : (targetInfo ? targetInfo.page.id : page.id);
+                uiRuntimeClosePage(ctx, closeId);
+                needRender = true;
+            } else if (conn.action === "back") {
+                uiRuntimeClosePage(ctx, page.id);
+                if (page.parentId) uiRuntimeOpenPage(ctx, page.parentId);
+                needRender = true;
+            } else if (conn.action === "toggle" || conn.action === "show" || conn.action === "hide") {
+                if (!targetInfo) {
+                    uiRuntimeToast(ctx, "交互目标组件不存在");
+                    return;
+                }
+                if (conn.action === "toggle") ctx.hidden[targetInfo.element.id] = !ctx.hidden[targetInfo.element.id];
+                else ctx.hidden[targetInfo.element.id] = conn.action === "hide";
+                needRender = true;
+            } else if (conn.action === "focus") {
+                if (!targetInfo) return;
+                ctx.hidden[targetInfo.element.id] = false;
+                if (!ctx.open[targetInfo.page.id]) uiRuntimeOpenPage(ctx, targetInfo.page.id);
+                focusId = targetInfo.element.id;
+                needRender = true;
+            } else if (conn.action === "setText") {
+                if (!targetInfo) return;
+                ctx.texts[targetInfo.element.id] = conn.value || "已更新";
+                needRender = true;
+            } else if (conn.action === "alert") {
+                uiRuntimeToast(ctx, conn.value || "操作完成");
+            }
+        });
+        if (needRender) {
+            ctx.render();
+            if (focusId) {
+                setTimeout(function () {
+                    var target = ctx.runtime.querySelector('[data-ui-el="' + focusId + '"] input, [data-ui-el="' + focusId + '"] textarea');
+                    if (target) target.focus();
+                }, 30);
+            }
+        }
+    }
+
+    function uiRuntimeButton(text, className, handler) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = className || "";
+        button.textContent = text;
+        if (handler) button.addEventListener("click", handler);
+        return button;
+    }
+
+    function uiRuntimeFillTable(container, rows, onSelect) {
+        container.innerHTML = "";
+        if (!rows || !rows.length) {
+            container.textContent = "暂无数据";
+            return;
+        }
+        var table = document.createElement("table");
+        var thead = document.createElement("thead");
+        var headRow = document.createElement("tr");
+        var sortState = container._uiSort || { index: -1, dir: 1 };
+        rows[0].forEach(function (cell, index) {
+            var th = document.createElement("th");
+            th.textContent = cell || ("列 " + (index + 1));
+            th.addEventListener("click", function () {
+                var bodyRows = rows.slice(1);
+                if (sortState.index === index) sortState.dir = -sortState.dir;
+                else { sortState.index = index; sortState.dir = 1; }
+                container._uiSort = sortState;
+                bodyRows.sort(function (a, b) {
+                    return String(a[index] || "").localeCompare(String(b[index] || ""), "zh-CN") * sortState.dir;
+                });
+                uiRuntimeFillTable(container, [rows[0]].concat(bodyRows), onSelect);
+            });
+            headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        var tbody = document.createElement("tbody");
+        rows.slice(1).forEach(function (row) {
+            var tr = document.createElement("tr");
+            row.forEach(function (cell) {
+                var td = document.createElement("td");
+                td.textContent = cell;
+                tr.appendChild(td);
+            });
+            tr.addEventListener("click", function () {
+                Array.prototype.forEach.call(tbody.children, function (item) { item.classList.remove("selected"); });
+                tr.classList.add("selected");
+                if (onSelect) onSelect(row);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    function uiRuntimeParseObj(text) {
+        var vertices = [];
+        var faces = [];
+        String(text || "").split(/\r?\n/).forEach(function (line) {
+            var trimmed = line.trim();
+            if (!trimmed || trimmed.charAt(0) === "#") return;
+            var parts = trimmed.split(/\s+/);
+            if (parts[0] === "v" && parts.length >= 4) {
+                vertices.push([Number(parts[1]), Number(parts[2]), Number(parts[3])]);
+            } else if (parts[0] === "f" && parts.length >= 4) {
+                var indices = [];
+                for (var i = 1; i < parts.length; i++) {
+                    var raw = parseInt(parts[i].split("/")[0], 10);
+                    if (!isFinite(raw)) continue;
+                    indices.push(raw > 0 ? raw - 1 : vertices.length + raw);
+                }
+                for (var j = 1; j + 1 < indices.length; j++) {
+                    faces.push([indices[0], indices[j], indices[j + 1]]);
+                }
+            }
+        });
+        return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+    }
+
+    function uiRuntimeParseStlAscii(text) {
+        var vertices = [];
+        var matches = String(text || "").match(/vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g) || [];
+        matches.forEach(function (line) {
+            var parts = line.split(/\s+/);
+            vertices.push([Number(parts[1]), Number(parts[2]), Number(parts[3])]);
+        });
+        var faces = [];
+        for (var i = 0; i + 2 < vertices.length; i += 3) {
+            faces.push([i, i + 1, i + 2]);
+        }
+        return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+    }
+
+    function uiRuntimeParseStlBinary(buffer) {
+        if (!buffer || buffer.byteLength < 84) return null;
+        var view = new DataView(buffer);
+        var count = view.getUint32(80, true);
+        if (84 + count * 50 !== buffer.byteLength || count <= 0 || count > 200000) return null;
+        var vertices = [];
+        var faces = [];
+        var offset = 84;
+        for (var i = 0; i < count; i++) {
+            offset += 12; // normal
+            var base = vertices.length;
+            for (var j = 0; j < 3; j++) {
+                vertices.push([
+                    view.getFloat32(offset, true),
+                    view.getFloat32(offset + 4, true),
+                    view.getFloat32(offset + 8, true)
+                ]);
+                offset += 12;
+            }
+            offset += 2;
+            faces.push([base, base + 1, base + 2]);
+        }
+        return { vertices: vertices, faces: faces };
+    }
+
+    function uiRuntimeNormalizeModel(model) {
+        if (!model || !model.vertices.length) return null;
+        var minX = Infinity, minY = Infinity, minZ = Infinity;
+        var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        model.vertices.forEach(function (v) {
+            minX = Math.min(minX, v[0]); maxX = Math.max(maxX, v[0]);
+            minY = Math.min(minY, v[1]); maxY = Math.max(maxY, v[1]);
+            minZ = Math.min(minZ, v[2]); maxZ = Math.max(maxZ, v[2]);
+        });
+        var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
+        var radius = 0;
+        var centered = model.vertices.map(function (v) {
+            var p = [v[0] - cx, v[1] - cy, v[2] - cz];
+            radius = Math.max(radius, Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]));
+            return p;
+        });
+        return {
+            vertices: centered,
+            faces: model.faces.slice(0, 12000),
+            radius: radius || 1
+        };
+    }
+
+    function uiRuntimeModelViewer(el, props, text, sceneMode, ctx) {
+        var wrap = document.createElement("div");
+        wrap.className = "ui-rt-model-viewer" + (sceneMode ? " scene" : "");
+        var canvas = document.createElement("canvas");
+        wrap.appendChild(canvas);
+        var status = document.createElement("div");
+        status.className = "ui-rt-model-status";
+        status.textContent = "加载模型…";
+        wrap.appendChild(status);
+        var hint = document.createElement("div");
+        hint.className = "ui-rt-3d-hint";
+        hint.textContent = "拖动旋转 · 滚轮缩放";
+        wrap.appendChild(hint);
+        var state = {
+            rx: -20, ry: 32, zoom: 1, model: null, drag: null, dpr: window.devicePixelRatio || 1
+        };
+        var color = props.color || "#0969da";
+
+        function drawGrid(context, width, height) {
+            if (!sceneMode) return;
+            context.save();
+            context.strokeStyle = "rgba(9, 105, 218, 0.16)";
+            context.lineWidth = 1;
+            var horizon = height * 0.58;
+            for (var i = -8; i <= 8; i++) {
+                context.beginPath();
+                context.moveTo(width / 2 + i * 18, height);
+                context.lineTo(width / 2 + i * 8, horizon);
+                context.stroke();
+            }
+            for (var j = 0; j < 8; j++) {
+                var y = horizon + (height - horizon) * (j / 8);
+                context.beginPath();
+                context.moveTo(0, y);
+                context.lineTo(width, y);
+                context.stroke();
+            }
+            context.restore();
+        }
+
+        function render() {
+            var width = canvas.clientWidth;
+            var height = canvas.clientHeight;
+            if (!width || !height) return;
+            var dpr = state.dpr;
+            if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+                canvas.width = Math.round(width * dpr);
+                canvas.height = Math.round(height * dpr);
+            }
+            var context = canvas.getContext("2d");
+            context.setTransform(dpr, 0, 0, dpr, 0, 0);
+            context.clearRect(0, 0, width, height);
+            context.fillStyle = "#ffffff";
+            context.fillRect(0, 0, width, height);
+            drawGrid(context, width, height);
+            if (!state.model) return;
+            var model = state.model;
+            var rx = state.rx * Math.PI / 180;
+            var ry = state.ry * Math.PI / 180;
+            var cosX = Math.cos(rx), sinX = Math.sin(rx);
+            var cosY = Math.cos(ry), sinY = Math.sin(ry);
+            var base = Math.min(width, height) * 0.34 / model.radius * state.zoom;
+            var projected = model.vertices.map(function (v) {
+                var x = v[0] * cosY + v[2] * sinY;
+                var z = -v[0] * sinY + v[2] * cosY;
+                var y = v[1] * cosX - z * sinX;
+                var z2 = v[1] * sinX + z * cosX;
+                var persp = 2.6 / (2.6 + z2 * 0.5);
+                return { x: width / 2 + x * base * persp, y: height / 2 + y * base * persp, z: z2 };
+            });
+            var faces = model.faces.map(function (face, index) {
+                var depth = (projected[face[0]].z + projected[face[1]].z + projected[face[2]].z) / 3;
+                return { face: face, depth: depth, index: index };
+            }).sort(function (a, b) { return a.depth - b.depth; });
+            faces.forEach(function (item) {
+                var face = item.face;
+                var a = projected[face[0]], b = projected[face[1]], c = projected[face[2]];
+                if (!a || !b || !c) return;
+                context.beginPath();
+                context.moveTo(a.x, a.y);
+                context.lineTo(b.x, b.y);
+                context.lineTo(c.x, c.y);
+                context.closePath();
+                context.fillStyle = "rgba(9, 105, 218, 0.06)";
+                context.fill();
+                context.strokeStyle = color;
+                context.lineWidth = 0.8;
+                context.stroke();
+            });
+            status.textContent = text + " · " + model.faces.length + " 面";
+        }
+
+        function load() {
+            var source = uiResolveAsset(props.src);
+            if (!source) {
+                status.textContent = "未配置模型文件（资源路径支持 .obj / .stl）";
+                return;
+            }
+            fetch(source).then(function (response) {
+                if (!response.ok) throw new Error("HTTP " + response.status);
+                return response.arrayBuffer();
+            }).then(function (buffer) {
+                var model = uiRuntimeParseStlBinary(buffer);
+                if (!model) {
+                    var textContent = new TextDecoder("utf-8").decode(buffer);
+                    if (/^\s*v\s+/m.test(textContent)) model = uiRuntimeParseObj(textContent);
+                    if (!model) model = uiRuntimeParseStlAscii(textContent);
+                }
+                state.model = uiRuntimeNormalizeModel(model);
+                if (!state.model) {
+                    status.textContent = "模型解析失败，仅显示占位立方体";
+                    return;
+                }
+                render();
+            }).catch(function () {
+                status.textContent = "模型加载失败，仅显示占位立方体";
+            });
+        }
+
+        var resizeObserver = null;
+        if (window.ResizeObserver) {
+            resizeObserver = new ResizeObserver(function () { render(); });
+            resizeObserver.observe(canvas);
+        }
+        setTimeout(function () {
+            if (!canvas.isConnected) {
+                if (resizeObserver) resizeObserver.disconnect();
+                return;
+            }
+            render();
+            load();
+        }, 40);
+        canvas.addEventListener("pointerdown", function (e) {
+            e.preventDefault();
+            try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+            state.drag = { x: e.clientX, y: e.clientY, rx: state.rx, ry: state.ry };
+        });
+        canvas.addEventListener("pointermove", function (e) {
+            if (!state.drag) return;
+            state.ry = state.drag.ry + (e.clientX - state.drag.x) * 0.6;
+            state.rx = state.drag.rx - (e.clientY - state.drag.y) * 0.6;
+            render();
+        });
+        canvas.addEventListener("pointerup", function () { state.drag = null; });
+        canvas.addEventListener("pointercancel", function () { state.drag = null; });
+        canvas.addEventListener("wheel", function (e) {
+            e.preventDefault();
+            state.zoom = Math.max(0.5, Math.min(2.4, state.zoom - e.deltaY * 0.001));
+            render();
+        }, { passive: false });
+        return wrap;
+    }
+
+    function uiRuntimeElement(page, el, ctx) {
+        var node = document.createElement("div");
+        var depth = uiElementDepth(page, el);
+        var typeClass = (el.type === "button" || el.type === "avatar" || el.type === "animation")
+            ? "ui-rt-type-" + el.type
+            : "ui-rt-" + el.type;
+        node.className = "ui-rt-el " + typeClass + (depth ? " ui-rt-nested" : "");
+        node.setAttribute("data-ui-el", el.id);
+        node.style.left = el.x + "px";
+        node.style.top = el.y + "px";
+        node.style.width = el.w + "px";
+        node.style.height = el.h + "px";
+        node.style.zIndex = String(10 + depth * 10 + page.elements.indexOf(el));
+        var text = ctx.texts[el.id] != null ? ctx.texts[el.id] : (el.text || UI_TYPE_LABELS[el.type]);
+        var props = el.props || {};
+        var run = function (eventName) { uiRuntimeRunEvent(ctx, page, el, eventName || "click"); };
+
+        if (["page", "navbar", "sidebar", "content", "card", "form"].indexOf(el.type) >= 0) {
+            node.style.pointerEvents = "auto";
+            node.addEventListener("click", function (e) {
+                if (e.target === node) run("click");
+            });
+        } else if (["heading", "text", "avatar"].indexOf(el.type) >= 0) {
+            node.addEventListener("click", function () { run("click"); });
+        }
+
+        if (el.type === "page") {
+            node.classList.add("ui-rt-structural");
+            node.innerHTML = '<div class="ui-rt-page-label">' + escapeHtml(text) + "</div>";
+            return node;
+        }
+
+        if (el.type === "navbar" || el.type === "sidebar") {
+            node.classList.add("ui-rt-structural");
+            var title = document.createElement("div");
+            title.className = "ui-rt-struct-title";
+            title.textContent = text;
+            node.appendChild(title);
+            var items = uiSplitItems(props.items, el.type === "navbar"
+                ? ["首页", "产品", "文档"]
+                : ["概览", "文件", "设置"]);
+            var list = document.createElement("div");
+            list.className = "ui-rt-nav-list";
+            items.forEach(function (item, index) {
+                var itemNode = document.createElement("span");
+                itemNode.className = "ui-rt-nav-item" + (index === 0 ? " active" : "");
+                itemNode.textContent = item;
+                itemNode.addEventListener("click", function () {
+                    Array.prototype.forEach.call(list.children, function (child) { child.classList.remove("active"); });
+                    itemNode.classList.add("active");
+                    run("click");
+                });
+                list.appendChild(itemNode);
+            });
+            node.appendChild(list);
+            return node;
+        }
+
+        if (el.type === "content" || el.type === "card") {
+            node.classList.add("ui-rt-structural");
+            node.innerHTML = '<div class="ui-rt-struct-title">' + escapeHtml(text) + "</div>" +
+                (props.note ? '<div class="ui-rt-note">' + escapeHtml(props.note) + "</div>" : "");
+            return node;
+        }
+
+        if (el.type === "form") {
+            node.classList.add("ui-rt-structural");
+            node.innerHTML = '<div class="ui-rt-struct-title">' + escapeHtml(text) + "</div>" +
+                (props.note ? '<div class="ui-rt-note">' + escapeHtml(props.note) + "</div>" : "");
+            var submit = uiRuntimeButton(props.submitText || "提交", "ui-rt-button primary", function () {
+                uiRuntimeSubmitForm(ctx, page, el);
+            });
+            submit.style.position = "absolute";
+            submit.style.right = "10px";
+            submit.style.bottom = "8px";
+            node.appendChild(submit);
+            return node;
+        }
+
+        if (el.type === "heading") {
+            var level = Math.max(1, Math.min(6, parseInt(props.level, 10) || 2));
+            var heading = document.createElement("h" + level);
+            heading.textContent = text;
+            node.appendChild(heading);
+            return node;
+        }
+
+        if (el.type === "text") {
+            node.innerHTML = '<div class="ui-rt-text">' + escapeHtml(text) + "</div>" +
+                (props.note ? '<div class="ui-rt-note">' + escapeHtml(props.note) + "</div>" : "");
+            return node;
+        }
+
+        if (el.type === "button") {
+            var button = uiRuntimeButton(text || "按钮", "ui-rt-button " + (props.variant || "primary"), function () {
+                var hasClick = ctx.doc.connections.some(function (conn) {
+                    return conn.from === el.id && conn.event === "click";
+                });
+                if (!hasClick && el.parentId) {
+                    var form = uiFindElement(page, el.parentId);
+                    if (form && form.type === "form") {
+                        uiRuntimeSubmitForm(ctx, page, form);
+                        return;
+                    }
+                }
+                run("click");
+            });
+            if (props.disabled === true || props.disabled === "true") button.disabled = true;
+            node.appendChild(button);
+            return node;
+        }
+
+        if (el.type === "input") {
+            if (text) {
+                var label = document.createElement("div");
+                label.className = "ui-rt-input-label";
+                label.textContent = text;
+                node.appendChild(label);
+            }
+            var input = document.createElement("input");
+            input.type = props.inputType || "text";
+            input.placeholder = props.placeholder || "请输入";
+            input.value = ctx.values[el.id] != null ? ctx.values[el.id] : (props.value || "");
+            input.disabled = props.disabled === true || props.disabled === "true";
+            input.addEventListener("input", function () { ctx.values[el.id] = input.value; });
+            input.addEventListener("change", function () {
+                ctx.values[el.id] = input.value;
+                run("change");
+            });
+            node.appendChild(input);
+            return node;
+        }
+
+        if (el.type === "image" || el.type === "gif") {
+            var src = uiResolveAsset(props.src);
+            if (src) {
+                var img = document.createElement("img");
+                img.src = src;
+                img.alt = text;
+                img.style.objectFit = props.fit || "cover";
+                img.addEventListener("click", function () {
+                    if (lightbox && lightboxImg) {
+                        lightboxImg.src = img.src;
+                        lightbox.hidden = false;
+                    }
+                    run("click");
+                });
+                node.appendChild(img);
+            } else if (el.type === "gif") {
+                node.innerHTML = '<div class="ui-rt-gif-demo"><span>GIF</span></div>';
+            } else {
+                node.innerHTML = '<div class="ui-rt-image-placeholder">' + escapeHtml(text) + "</div>";
+            }
+            if (props.note) {
+                var imageNote = document.createElement("div");
+                imageNote.className = "ui-rt-note";
+                imageNote.textContent = props.note;
+                node.appendChild(imageNote);
+            }
+            return node;
+        }
+
+        if (el.type === "avatar") {
+            if (uiResolveAsset(props.src)) {
+                var avatarImg = document.createElement("img");
+                avatarImg.src = uiResolveAsset(props.src);
+                avatarImg.alt = text;
+                node.appendChild(avatarImg);
+            } else {
+                var initials = document.createElement("div");
+                initials.className = "ui-rt-avatar";
+                initials.textContent = (text || "?").slice(0, 2);
+                node.appendChild(initials);
+            }
+            return node;
+        }
+
+        if (el.type === "table") {
+            var tableTitle = document.createElement("div");
+            tableTitle.className = "ui-rt-struct-title";
+            tableTitle.textContent = text;
+            node.appendChild(tableTitle);
+            var tableBox = document.createElement("div");
+            tableBox.className = "ui-rt-table-box";
+            node.appendChild(tableBox);
+            var rows = uiSplitRows(props.items, uiDefaultTableRows());
+            uiRuntimeFillTable(tableBox, rows, function (row) {
+                ctx.selected[el.id] = row.join(" | ");
+                run("select");
+            });
+            return node;
+        }
+
+        if (el.type === "list") {
+            var listTitle = document.createElement("div");
+            listTitle.className = "ui-rt-struct-title";
+            listTitle.textContent = text;
+            node.appendChild(listTitle);
+            var listBox = document.createElement("div");
+            listBox.className = "ui-rt-list";
+            uiSplitItems(props.items, ["列表项一", "列表项二", "列表项三"]).forEach(function (item, index) {
+                var row = document.createElement("div");
+                row.className = "ui-rt-list-item" + (index === 0 ? " active" : "");
+                row.textContent = item;
+                row.addEventListener("click", function () {
+                    Array.prototype.forEach.call(listBox.children, function (child) { child.classList.remove("active"); });
+                    row.classList.add("active");
+                    ctx.selected[el.id] = item;
+                    run("select");
+                });
+                listBox.appendChild(row);
+            });
+            node.appendChild(listBox);
+            return node;
+        }
+
+        if (el.type === "filebrowser") {
+            var fileTitle = document.createElement("div");
+            fileTitle.className = "ui-rt-filebar";
+            fileTitle.textContent = text || "文件浏览器";
+            node.appendChild(fileTitle);
+            var fileBody = document.createElement("div");
+            fileBody.className = "ui-rt-filelist";
+            var path = document.createElement("div");
+            path.className = "ui-rt-filepath";
+            path.textContent = "当前：/";
+            var fileItems = uiSplitItems(props.items, ["src/", "assets/", "README.md", "docs/guide.md"]);
+            fileItems.forEach(function (item) {
+                var file = document.createElement("div");
+                var isFolder = /\/$/.test(item) || item.indexOf(".") < 0;
+                file.className = "ui-rt-fileitem" + (isFolder ? " folder" : "");
+                file.textContent = (isFolder ? "▸ " : "▢ ") + item;
+                file.addEventListener("click", function () {
+                    Array.prototype.forEach.call(fileBody.querySelectorAll(".ui-rt-fileitem"), function (child) { child.classList.remove("active"); });
+                    file.classList.add("active");
+                    path.textContent = "当前：/" + item.replace(/\/$/, "");
+                    ctx.selected[el.id] = item;
+                    run("select");
+                });
+                fileBody.appendChild(file);
+            });
+            node.appendChild(path);
+            node.appendChild(fileBody);
+            return node;
+        }
+
+        if (el.type === "database") {
+            var dbTitle = document.createElement("div");
+            dbTitle.className = "ui-rt-struct-title";
+            dbTitle.textContent = text || "数据库";
+            node.appendChild(dbTitle);
+            var dbToolbar = document.createElement("div");
+            dbToolbar.className = "ui-rt-db-toolbar";
+            var query = document.createElement("input");
+            query.placeholder = props.placeholder || "输入查询关键字";
+            query.value = ctx.values[el.id] || "";
+            var dbButton = uiRuntimeButton("查询", "ui-rt-button primary");
+            var dbStatus = document.createElement("span");
+            dbStatus.className = "ui-rt-db-status";
+            dbToolbar.appendChild(query);
+            dbToolbar.appendChild(dbButton);
+            dbToolbar.appendChild(dbStatus);
+            node.appendChild(dbToolbar);
+            var dbBox = document.createElement("div");
+            dbBox.className = "ui-rt-table-box";
+            node.appendChild(dbBox);
+            var dbRows = uiSplitRows(props.items, uiDefaultTableRows());
+            var dbSource = uiResolveAsset(props.dataUrl || props.src);
+            var runQuery = function () {
+                var keyword = query.value.trim().toLowerCase();
+                ctx.values[el.id] = query.value;
+                var rows = dbRows;
+                if (keyword) {
+                    rows = [dbRows[0]].concat(dbRows.slice(1).filter(function (row) {
+                        return row.join(" ").toLowerCase().indexOf(keyword) >= 0;
+                    }));
+                }
+                uiRuntimeFillTable(dbBox, rows, function (row) { ctx.selected[el.id] = row.join(" | "); });
+                dbStatus.textContent = rows.length > 1 ? (rows.length - 1) + " 行" : "暂无记录";
+                run("click");
+            };
+            dbButton.addEventListener("click", function () {
+                if (!dbSource) { runQuery(); return; }
+                dbStatus.textContent = "加载中…";
+                fetch(dbSource).then(function (response) { return response.json(); }).then(function (data) {
+                    var rows = [];
+                    if (Array.isArray(data)) {
+                        var keys = data.length && typeof data[0] === "object" ? Object.keys(data[0]) : [];
+                        if (keys.length) {
+                            rows.push(keys);
+                            data.forEach(function (item) { rows.push(keys.map(function (key) { return String(item[key] == null ? "" : item[key]); })); });
+                        } else {
+                            rows = data.map(function (item) { return [String(item)]; });
+                        }
+                    }
+                    dbRows = rows.length ? rows : dbRows;
+                    runQuery();
+                }).catch(function () {
+                    dbStatus.textContent = "加载失败";
+                    uiRuntimeToast(ctx, "数据源加载失败，已使用本地示例数据");
+                    runQuery();
+                });
+            });
+            query.addEventListener("keydown", function (e) { if (e.key === "Enter") dbButton.click(); });
+            uiRuntimeFillTable(dbBox, dbRows);
+            return node;
+        }
+
+        if (el.type === "model3d" || el.type === "scene3d") {
+            node.style.setProperty("--ui-3d-color", props.color || "#4daafc");
+            if (props.src) {
+                node.appendChild(uiRuntimeModelViewer(el, props, text, el.type === "scene3d", ctx));
+                return node;
+            }
+            var scene = document.createElement("div");
+            scene.className = "ui-rt-3d-scene" + (el.type === "scene3d" ? " scene" : "");
+            var cube = document.createElement("div");
+            cube.className = "ui-rt-cube";
+            ["front", "back", "left", "right", "top", "bottom"].forEach(function (face) {
+                var faceNode = document.createElement("div");
+                faceNode.className = "ui-rt-cube-face " + face;
+                faceNode.textContent = face === "front" ? text.slice(0, 8) : "";
+                cube.appendChild(faceNode);
+            });
+            scene.appendChild(cube);
+            var label = document.createElement("div");
+            label.className = "ui-rt-3d-label";
+            label.textContent = text;
+            scene.appendChild(label);
+            var hint = document.createElement("div");
+            hint.className = "ui-rt-3d-hint";
+            hint.textContent = "拖动旋转 · 滚轮缩放";
+            scene.appendChild(hint);
+            var rx = -18, ry = 32, scale = 1;
+            var updateCube = function () {
+                cube.style.transform = "scale(" + scale + ") rotateX(" + rx + "deg) rotateY(" + ry + "deg)";
+            };
+            var drag = null;
+            scene.addEventListener("pointerdown", function (e) {
+                e.preventDefault();
+                try { scene.setPointerCapture(e.pointerId); } catch (err) { /* 合成指针或已释放 */ }
+                drag = { x: e.clientX, y: e.clientY, rx: rx, ry: ry };
+            });
+            scene.addEventListener("pointermove", function (e) {
+                if (!drag) return;
+                ry = drag.ry + (e.clientX - drag.x) * 0.6;
+                rx = drag.rx - (e.clientY - drag.y) * 0.6;
+                updateCube();
+            });
+            scene.addEventListener("pointerup", function () { drag = null; });
+            scene.addEventListener("pointercancel", function () { drag = null; });
+            scene.addEventListener("wheel", function (e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(2.2, scale - e.deltaY * 0.001));
+                updateCube();
+            }, { passive: false });
+            updateCube();
+            node.appendChild(scene);
+            return node;
+        }
+
+        if (el.type === "animation") {
+            var stage = document.createElement("div");
+            stage.className = "ui-rt-animation";
+            var ball = document.createElement("div");
+            ball.className = "ui-rt-animation-ball";
+            stage.appendChild(ball);
+            var controls = document.createElement("div");
+            controls.className = "ui-rt-animation-controls";
+            var play = uiRuntimeButton("暂停", "ui-rt-button");
+            var speed = document.createElement("input");
+            speed.type = "range";
+            speed.min = "0.3";
+            speed.max = "3";
+            speed.step = "0.1";
+            speed.value = String(props.speed || 1);
+            var speedLabel = document.createElement("span");
+            speedLabel.textContent = "速度 " + speed.value + "x";
+            var running = true;
+            var applySpeed = function () {
+                ball.style.animationDuration = (2.2 / Number(speed.value || 1)) + "s";
+                speedLabel.textContent = "速度 " + Number(speed.value).toFixed(1) + "x";
+            };
+            play.addEventListener("click", function () {
+                running = !running;
+                ball.style.animationPlayState = running ? "running" : "paused";
+                play.textContent = running ? "暂停" : "播放";
+            });
+            speed.addEventListener("input", applySpeed);
+            controls.appendChild(play);
+            controls.appendChild(speed);
+            controls.appendChild(speedLabel);
+            node.appendChild(stage);
+            node.appendChild(controls);
+            applySpeed();
+            return node;
+        }
+
+        if (el.type === "canvas") {
+            var canvasWrap = document.createElement("div");
+            canvasWrap.className = "ui-rt-canvas-wrap";
+            var toolbar = document.createElement("div");
+            toolbar.className = "ui-rt-canvas-toolbar";
+            var color = document.createElement("input");
+            color.type = "color";
+            color.value = props.color || "#0969da";
+            var size = document.createElement("input");
+            size.type = "range";
+            size.min = "1";
+            size.max = "16";
+            size.value = String(props.brush || 3);
+            var clear = uiRuntimeButton("清空", "ui-rt-button");
+            toolbar.appendChild(color);
+            toolbar.appendChild(size);
+            toolbar.appendChild(clear);
+            canvasWrap.appendChild(toolbar);
+            var canvasEl = document.createElement("canvas");
+            canvasWrap.appendChild(canvasEl);
+            node.appendChild(canvasWrap);
+            var dpr = window.devicePixelRatio || 1;
+            var drawWidth = Math.max(80, el.w);
+            var drawHeight = Math.max(40, el.h - 30);
+            canvasEl.width = Math.round(drawWidth * dpr);
+            canvasEl.height = Math.round(drawHeight * dpr);
+            canvasEl.style.width = "100%";
+            canvasEl.style.height = "calc(100% - 30px)";
+            var context2d = canvasEl.getContext("2d");
+            context2d.scale(dpr, dpr);
+            context2d.lineCap = "round";
+            context2d.lineJoin = "round";
+            var drawing = false;
+            var draw = function (e) {
+                var rect = canvasEl.getBoundingClientRect();
+                var x = (e.clientX - rect.left) * drawWidth / rect.width;
+                var y = (e.clientY - rect.top) * drawHeight / rect.height;
+                if (drawing) {
+                    context2d.strokeStyle = color.value;
+                    context2d.lineWidth = Number(size.value);
+                    context2d.lineTo(x, y);
+                    context2d.stroke();
+                }
+            };
+            canvasEl.addEventListener("pointerdown", function (e) {
+                e.preventDefault();
+                try { canvasEl.setPointerCapture(e.pointerId); } catch (err) { /* 合成指针或已释放 */ }
+                drawing = true;
+                var rect = canvasEl.getBoundingClientRect();
+                context2d.beginPath();
+                context2d.moveTo((e.clientX - rect.left) * drawWidth / rect.width,
+                    (e.clientY - rect.top) * drawHeight / rect.height);
+            });
+            canvasEl.addEventListener("pointermove", draw);
+            canvasEl.addEventListener("pointerup", function () { drawing = false; });
+            canvasEl.addEventListener("pointercancel", function () { drawing = false; });
+            clear.addEventListener("click", function () { context2d.clearRect(0, 0, drawWidth, drawHeight); });
+            return node;
+        }
+
+        node.textContent = text;
+        return node;
+    }
+
+    function buildUiRuntime(doc) {
+        var runtime = document.createElement("div");
+        runtime.className = "ui-runtime";
+        var stage = document.createElement("div");
+        stage.className = "ui-rt-stage";
+        runtime.appendChild(stage);
+        var ctx = {
+            doc: doc,
+            runtime: runtime,
+            stage: stage,
+            open: {},
+            positions: {},
+            values: {},
+            hidden: {},
+            texts: {},
+            selected: {},
+            z: 20
+        };
+        doc.pages.forEach(function (page) {
+            if (page.open) ctx.open[page.id] = true;
+        });
+        Object.keys(ctx.open).forEach(function (pageId) {
+            uiRuntimeOpenPage(ctx, pageId);
+        });
+        uiRuntimeOpenPage(ctx, doc.start);
+
+        ctx.render = function () {
+            stage.innerHTML = "";
+            var openPages = doc.pages.filter(function (page) { return ctx.open[page.id]; });
+            if (!openPages.length) {
+                var empty = document.createElement("div");
+                empty.className = "ui-rt-empty";
+                empty.textContent = "所有窗口都已关闭";
+                var reset = uiRuntimeButton("重新打开启动页", "ui-rt-button primary", function () {
+                    uiRuntimeOpenPage(ctx, doc.start);
+                    ctx.render();
+                });
+                empty.appendChild(reset);
+                stage.appendChild(empty);
+                return;
+            }
+            var maxRight = 0;
+            var maxBottom = 0;
+            openPages.forEach(function (page, index) {
+                var pos = uiRuntimePagePosition(page, index, ctx);
+                var win = document.createElement("div");
+                win.className = "ui-rt-window" + (page.kind === "dialog" ? " dialog" : "");
+                win.setAttribute("data-ui-page", page.id);
+                win.style.left = pos.left + "px";
+                win.style.top = pos.top + "px";
+                win.style.width = page.width + "px";
+                win.style.zIndex = String(pos.z || 20);
+                var head = document.createElement("div");
+                head.className = "ui-rt-window-head";
+                var title = document.createElement("span");
+                title.className = "ui-rt-window-title";
+                title.textContent = page.name || "页面";
+                var badge = document.createElement("span");
+                badge.className = "ui-rt-window-badge";
+                badge.textContent = UI_PAGE_KINDS[page.kind] || "窗口";
+                head.appendChild(title);
+                head.appendChild(badge);
+                if (page.parentId) {
+                    var owner = uiFindPage(doc, page.parentId);
+                    if (owner) {
+                        var ownerBadge = document.createElement("span");
+                        ownerBadge.className = "ui-rt-window-owner";
+                        ownerBadge.textContent = "属于 " + owner.name;
+                        head.appendChild(ownerBadge);
+                    }
+                }
+                var close = uiRuntimeButton("✕", "ui-rt-window-close", function (e) {
+                    e.stopPropagation();
+                    uiRuntimeClosePage(ctx, page.id);
+                    ctx.render();
+                });
+                close.title = "关闭窗口";
+                head.appendChild(close);
+                win.appendChild(head);
+                var body = document.createElement("div");
+                body.className = "ui-rt-window-body";
+                body.style.width = page.width + "px";
+                body.style.height = page.height + "px";
+                uiSortedElements(page).forEach(function (el) {
+                    if (uiRuntimeElementHidden(page, el, ctx)) return;
+                    body.appendChild(uiRuntimeElement(page, el, ctx));
+                });
+                win.appendChild(body);
+                win.addEventListener("pointerdown", function () {
+                    pos.z = ++ctx.z;
+                    win.style.zIndex = String(pos.z);
+                });
+                head.addEventListener("pointerdown", function (e) {
+                    if (e.button !== undefined && e.button !== 0) return;
+                    if (e.target && e.target.closest && e.target.closest("button")) return;
+                    e.preventDefault();
+                    var startX = e.clientX;
+                    var startY = e.clientY;
+                    var baseLeft = pos.left;
+                    var baseTop = pos.top;
+                    var scale = ctx.fitScale || 1;
+                    pos.z = ++ctx.z;
+                    win.style.zIndex = String(pos.z);
+                    var move = function (ev) {
+                        pos.left = Math.max(0, baseLeft + (ev.clientX - startX) / scale);
+                        pos.top = Math.max(0, baseTop + (ev.clientY - startY) / scale);
+                        win.style.left = pos.left + "px";
+                        win.style.top = pos.top + "px";
+                    };
+                    var up = function () {
+                        document.removeEventListener("pointermove", move);
+                        document.removeEventListener("pointerup", up);
+                    };
+                    document.addEventListener("pointermove", move);
+                    document.addEventListener("pointerup", up);
+                });
+                stage.appendChild(win);
+                maxRight = Math.max(maxRight, pos.left + page.width);
+                maxBottom = Math.max(maxBottom, pos.top + page.height + 36);
+            });
+            var designWidth = Math.max(320, maxRight + 28);
+            var designHeight = Math.max(240, maxBottom + 28);
+            ctx.designWidth = designWidth;
+            ctx.designHeight = designHeight;
+            stage.style.width = designWidth + "px";
+            stage.style.height = designHeight + "px";
+            stage.style.minWidth = designWidth + "px";
+            stage.style.minHeight = designHeight + "px";
+            ctx.fit();
+        };
+        ctx.fit = function () {
+            if (!runtime.clientWidth || !ctx.designWidth) return;
+            var available = Math.max(240, runtime.clientWidth - 36);
+            var scale = Math.max(0.65, Math.min(1, available / ctx.designWidth));
+            ctx.fitScale = scale;
+            stage.style.zoom = scale < 0.999 ? String(scale) : "";
+        };
+        ctx.render();
+        runtime._uiFit = ctx.fit;
+        runtime._uiReset = function () {
+            ctx.open = {};
+            ctx.positions = {};
+            ctx.values = {};
+            ctx.hidden = {};
+            ctx.texts = {};
+            doc.pages.forEach(function (page) { if (page.open) ctx.open[page.id] = true; });
+            Object.keys(ctx.open).forEach(function (pageId) {
+                uiRuntimeOpenPage(ctx, pageId);
+            });
+            uiRuntimeOpenPage(ctx, doc.start);
+            ctx.render();
+        };
+        return runtime;
     }
 
     /* 扫描 cm 中指定语言的围栏代码块（支持 ``` 与 ~~~） */
@@ -2284,8 +3727,8 @@
             head.className = "ui-block-head";
             var title = document.createElement("span");
             title.textContent = layout
-                ? "UI 布局 · " + layout.width + " × " + layout.height
-                : "UI 布局 · JSON 错误";
+                ? "UI 原型 · " + layout.pages.length + " 个页面 · 点击控件即可交互"
+                : "UI 原型 · JSON 错误";
             head.appendChild(title);
             if (layout) {
                 block.setAttribute("data-ui-src", source);
@@ -2293,7 +3736,7 @@
                 btn.type = "button";
                 btn.className = "ui-edit-btn";
                 btn.textContent = "编辑";
-                btn.title = "打开 UI 布局设计器";
+                btn.title = "打开 UI 原型设计器";
                 btn.addEventListener("click", (function (idx, src) {
                     return function (e) {
                         e.preventDefault();
@@ -2302,13 +3745,26 @@
                     };
                 })(index, source));
                 head.appendChild(btn);
+                var reset = document.createElement("button");
+                reset.type = "button";
+                reset.className = "ui-reset-btn";
+                reset.textContent = "重置";
+                reset.title = "恢复初始打开的窗口";
+                head.appendChild(reset);
                 block.appendChild(head);
-                block.appendChild(buildUiWireframe(layout));
+                var runtime = buildUiRuntime(layout);
+                reset.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (runtime._uiReset) runtime._uiReset();
+                });
+                block.appendChild(runtime);
+                if (runtime._uiFit) setTimeout(runtime._uiFit, 0);
             } else {
                 block.appendChild(head);
                 var err = document.createElement("div");
                 err.className = "ui-error";
-                err.textContent = "UI 布局 JSON 解析失败，请在编辑器中修正该代码块。";
+                err.textContent = "UI 原型 JSON 解析失败，请在编辑器中修正该代码块。";
                 block.appendChild(err);
             }
             pre.parentNode.replaceChild(block, pre);
@@ -2317,25 +3773,9 @@
     }
 
     function uiLayoutJson() {
-        var out = {
-            width: uiLayout.width,
-            height: uiLayout.height,
-            elements: uiLayout.elements.map(function (el) {
-                var item = {
-                    id: el.id, type: el.type,
-                    x: Math.round(el.x), y: Math.round(el.y),
-                    w: Math.round(el.w), h: Math.round(el.h),
-                    text: el.text || ""
-                };
-                if ((el.props && el.props.src) || (el.props && el.props.note)) {
-                    item.props = {};
-                    if (el.props.src) item.props.src = el.props.src;
-                    if (el.props.note) item.props.note = el.props.note;
-                }
-                return item;
-            })
-        };
-        return JSON.stringify(out, null, 2);
+        if (uiDoc && uiLayout) return uiDocumentJson(uiDoc);
+        var fallback = { version: 2, start: "p1", pages: [uiLayout], connections: [] };
+        return uiDocumentJson(fallback);
     }
 
     /* ===================== 弹窗拖动 / 缩放 ===================== */
@@ -2551,6 +3991,143 @@
         return id ? uiCanvas.querySelector('.ui-canvas-el[data-id="' + id + '"]') : null;
     }
 
+    function uiCurrentPage() {
+        return uiLayout || (uiDoc ? uiDoc.pages[0] : null);
+    }
+
+    function uiPageIndexById(pageId) {
+        if (!uiDoc) return -1;
+        for (var i = 0; i < uiDoc.pages.length; i++) {
+            if (uiDoc.pages[i].id === pageId) return i;
+        }
+        return -1;
+    }
+
+    function uiPageOptionsHtml(selectedId, emptyLabel) {
+        var html = '<option value="">' + escapeHtml(emptyLabel || "无（页面根级）") + "</option>";
+        if (!uiDoc) return html;
+        uiDoc.pages.forEach(function (page) {
+            html += '<option value="' + escapeHtml(page.id) + '"' +
+                (page.id === selectedId ? " selected" : "") + ">" +
+                escapeHtml(page.name || page.id) + "</option>";
+        });
+        return html;
+    }
+
+    function uiElementOptionsHtml(page, selectedId, includePages) {
+        var html = '<option value="">无</option>';
+        if (includePages && uiDoc) {
+            html += '<optgroup label="窗口 / 页面">';
+            uiDoc.pages.forEach(function (p) {
+                html += '<option value="' + escapeHtml(p.id) + '"' +
+                    (p.id === selectedId ? " selected" : "") + ">窗口：" +
+                    escapeHtml(p.name || p.id) + "</option>";
+            });
+            html += "</optgroup>";
+            uiDoc.pages.forEach(function (p) {
+                html += '<optgroup label="组件：' + escapeHtml(p.name || p.id) + '">';
+                p.elements.forEach(function (el) {
+                    html += '<option value="' + escapeHtml(el.id) + '"' +
+                        (el.id === selectedId ? " selected" : "") + ">" +
+                        escapeHtml((UI_TYPE_LABELS[el.type] || el.type) + "：" + (el.text || el.id)) + "</option>";
+                });
+                html += "</optgroup>";
+            });
+            return html;
+        }
+        if (!page) return html;
+        page.elements.forEach(function (el) {
+            html += '<option value="' + escapeHtml(el.id) + '"' +
+                (el.id === selectedId ? " selected" : "") + ">" +
+                escapeHtml((UI_TYPE_LABELS[el.type] || el.type) + "：" + (el.text || el.id)) + "</option>";
+        });
+        return html;
+    }
+
+    function uiRenderPageTabs() {
+        if (!uiPageTabs || !uiDoc) return;
+        uiPageTabs.innerHTML = "";
+        uiDoc.pages.forEach(function (page) {
+            var tab = document.createElement("button");
+            tab.type = "button";
+            tab.className = "ui-page-tab" + (uiLayout && page.id === uiLayout.id ? " active" : "");
+            tab.setAttribute("data-page-id", page.id);
+            var icon = document.createElement("span");
+            icon.className = "ui-page-tab-icon";
+            icon.textContent = page.kind === "dialog" ? "◈" : "▣";
+            tab.appendChild(icon);
+            var name = document.createElement("span");
+            name.textContent = page.name || page.id;
+            tab.appendChild(name);
+            if (page.parentId) {
+                var owner = uiFindPage(uiDoc, page.parentId);
+                if (owner) {
+                    var ownerBadge = document.createElement("span");
+                    ownerBadge.className = "ui-page-tab-owner";
+                    ownerBadge.textContent = "↳ " + owner.name;
+                    tab.appendChild(ownerBadge);
+                }
+            }
+            if (page.id === uiDoc.start) {
+                var startBadge = document.createElement("span");
+                startBadge.className = "ui-page-tab-start";
+                startBadge.textContent = "启动";
+                tab.appendChild(startBadge);
+            }
+            tab.title = (UI_PAGE_KINDS[page.kind] || "窗口") + "：" + page.name +
+                (page.open ? " · 初始打开" : " · 初始关闭");
+            tab.addEventListener("click", function () {
+                if (uiConnectFrom) {
+                    uiCreateConnectionTo(page.id);
+                    return;
+                }
+                uiSwitchPage(page.id);
+            });
+            uiPageTabs.appendChild(tab);
+        });
+    }
+
+    function uiSwitchPage(pageId) {
+        if (!uiDoc) return;
+        var page = uiFindPage(uiDoc, pageId);
+        if (!page) return;
+        uiLayout = page;
+        uiSelectedId = null;
+        uiConnectFrom = null;
+        uiRenderEditor();
+        uiEditorHint.textContent = "当前页面：" + page.name + "（" + (UI_PAGE_KINDS[page.kind] || "窗口") + "）";
+    }
+
+    function uiRenderStructure() {
+        if (!uiStructure || !uiLayout) return;
+        uiStructure.innerHTML = "";
+        var root = document.createElement("div");
+        root.className = "ui-structure-root";
+        root.textContent = "▣ " + (uiLayout.name || "页面");
+        root.addEventListener("click", function () { uiSelectElement(null); });
+        uiStructure.appendChild(root);
+        var renderLevel = function (parentId, depth) {
+            uiLayout.elements.filter(function (el) { return (el.parentId || "") === parentId; })
+                .forEach(function (el) {
+                    var row = document.createElement("div");
+                    row.className = "ui-structure-item" + (el.id === uiSelectedId ? " active" : "") +
+                        (uiIsContainerType(el.type) ? " container" : "");
+                    row.style.paddingLeft = (8 + depth * 12) + "px";
+                    row.innerHTML = '<span class="ui-structure-icon">' + escapeHtml(UI_TYPE_ICONS[el.type] || "•") +
+                        '</span><span class="ui-structure-label">' +
+                        escapeHtml(el.text || UI_TYPE_LABELS[el.type]) + "</span>";
+                    row.title = UI_TYPE_LABELS[el.type] + " · " + el.id;
+                    row.addEventListener("click", function () {
+                        uiSelectElement(el.id);
+                        uiRenderStructure();
+                    });
+                    uiStructure.appendChild(row);
+                    renderLevel(el.id, depth + 1);
+                });
+        };
+        renderLevel("", 0);
+    }
+
     function uiDefaultPosition(type, w, h) {
         var W = uiLayout.width;
         var H = uiLayout.height;
@@ -2567,24 +4144,43 @@
 
     function buildUiCanvasElement(el) {
         var node = document.createElement("div");
-        node.className = "ui-canvas-el" + (el.id === uiSelectedId ? " selected" : "");
+        var depth = uiLayout ? uiElementDepth(uiLayout, el) : 0;
+        var childCount = uiLayout ? uiLayout.elements.filter(function (child) {
+            return child.parentId === el.id;
+        }).length : 0;
+        node.className = "ui-canvas-el" + (el.id === uiSelectedId ? " selected" : "") +
+            (depth ? " nested" : "") + (uiIsContainerType(el.type) ? " container-type" : "") +
+            (el.id === uiConnectFrom ? " connect-source" : "");
         node.setAttribute("data-id", el.id);
         node.setAttribute("data-type", el.type);
+        node.setAttribute("data-parent-id", el.parentId || "");
         node.style.left = el.x + "px";
         node.style.top = el.y + "px";
         node.style.width = el.w + "px";
         node.style.height = el.h + "px";
-        node.title = UI_TYPE_LABELS[el.type] + "：" + (el.text || "（未填写文字）");
+        node.style.zIndex = String(10 + depth * 10 + uiLayout.elements.indexOf(el));
+        var icon = document.createElement("span");
+        icon.className = "ui-canvas-icon";
+        icon.textContent = UI_TYPE_ICONS[el.type] || "•";
+        node.appendChild(icon);
         var label = document.createElement("div");
         label.className = "ui-canvas-label";
         label.textContent = el.text || UI_TYPE_LABELS[el.type];
         node.appendChild(label);
+        if (childCount) {
+            var childBadge = document.createElement("span");
+            childBadge.className = "ui-canvas-children";
+            childBadge.textContent = childCount + " 子组件";
+            node.appendChild(childBadge);
+        }
         if (el.props && el.props.note) {
             var note = document.createElement("div");
             note.className = "ui-canvas-note";
             note.textContent = el.props.note;
             node.appendChild(note);
         }
+        node.title = UI_TYPE_LABELS[el.type] + "：" + (el.text || "（未填写文字）") +
+            (el.parentId ? " · 属于 " + el.parentId : "");
         ["nw", "ne", "sw", "se"].forEach(function (dir) {
             var handle = document.createElement("span");
             handle.className = "ui-canvas-resize ui-resize-" + dir;
@@ -2594,9 +4190,204 @@
         return node;
     }
 
+    function uiParentOptions(el) {
+        var html = '<option value="">页面根级</option>';
+        if (!uiLayout) return html;
+        uiLayout.elements.forEach(function (candidate) {
+            if (!uiIsContainerType(candidate.type) || candidate.id === el.id) return;
+            if (!uiCanContain(candidate.type, el.type)) return;
+            if (uiElementDescendants(uiLayout, el.id).indexOf(candidate) >= 0) return;
+            html += '<option value="' + escapeHtml(candidate.id) + '"' +
+                (candidate.id === el.parentId ? " selected" : "") + ">" +
+                escapeHtml(UI_TYPE_LABELS[candidate.type] + "：" + (candidate.text || candidate.id)) +
+                "</option>";
+        });
+        return html;
+    }
+
+    function uiPropDefsFor(type) {
+        var defs = [];
+        if (type === "input") {
+            defs.push({ key: "placeholder", label: "占位提示", type: "text" });
+            defs.push({ key: "value", label: "默认值", type: "text" });
+            defs.push({ key: "inputType", label: "输入类型", type: "select", options: ["text", "password", "number", "email", "search"] });
+            defs.push({ key: "required", label: "必填", type: "checkbox" });
+            defs.push({ key: "disabled", label: "禁用", type: "checkbox" });
+        } else if (type === "button") {
+            defs.push({ key: "variant", label: "按钮样式", type: "select", options: ["primary", "secondary", "danger", "ghost"] });
+            defs.push({ key: "disabled", label: "禁用", type: "checkbox" });
+        } else if (type === "form") {
+            defs.push({ key: "submitText", label: "提交按钮文字", type: "text" });
+        } else if (type === "heading") {
+            defs.push({ key: "level", label: "标题级别", type: "select", options: ["1", "2", "3", "4", "5", "6"] });
+        } else if (type === "navbar" || type === "sidebar" || type === "list") {
+            defs.push({ key: "items", label: "项目（每行一个）", type: "textarea" });
+        } else if (type === "table" || type === "database") {
+            defs.push({ key: "columns", label: "列名（逗号分隔）", type: "text" });
+            defs.push({ key: "items", label: "数据（每行一条，| 或逗号分隔）", type: "textarea" });
+            if (type === "database") {
+                defs.push({ key: "placeholder", label: "查询提示", type: "text" });
+                defs.push({ key: "dataUrl", label: "数据源 URL（可选，返回 JSON）", type: "text" });
+            }
+        } else if (type === "filebrowser") {
+            defs.push({ key: "items", label: "文件/文件夹（每行一个）", type: "textarea" });
+        } else if (type === "model3d" || type === "scene3d") {
+            defs.push({ key: "color", label: "模型颜色（CSS）", type: "text" });
+        } else if (type === "animation") {
+            defs.push({ key: "speed", label: "动画速度", type: "text" });
+        } else if (type === "canvas") {
+            defs.push({ key: "color", label: "画笔颜色", type: "text" });
+            defs.push({ key: "brush", label: "画笔大小", type: "text" });
+        } else if (type === "image" || type === "gif") {
+            defs.push({ key: "fit", label: "填充方式", type: "select", options: ["cover", "contain", "fill"] });
+        } else if (type === "content" || type === "card" || type === "text" || type === "page") {
+            defs.push({ key: "note", label: "备注 / 说明", type: "text" });
+        }
+        return defs;
+    }
+
+    function uiRenderExtraProps(el) {
+        if (!uiPropExtra) return;
+        uiPropExtra.innerHTML = "";
+        var defs = uiPropDefsFor(el.type);
+        defs.forEach(function (def) {
+            var label = document.createElement("label");
+            label.className = "ui-field";
+            if (def.type === "checkbox") {
+                label.className = "ui-check-field";
+            }
+            var text = document.createElement("span");
+            text.textContent = def.label;
+            label.appendChild(text);
+            var input;
+            if (def.type === "textarea") {
+                input = document.createElement("textarea");
+                input.rows = 3;
+                var value = el.props[def.key];
+                input.value = Array.isArray(value) ? value.join("\n") : String(value == null ? "" : value);
+            } else if (def.type === "select") {
+                input = document.createElement("select");
+                (def.options || []).forEach(function (option) {
+                    var opt = document.createElement("option");
+                    opt.value = option;
+                    opt.textContent = option;
+                    input.appendChild(opt);
+                });
+                input.value = String(el.props[def.key] == null ? (def.options || [""])[0] : el.props[def.key]);
+            } else if (def.type === "checkbox") {
+                input = document.createElement("input");
+                input.type = "checkbox";
+                input.checked = el.props[def.key] === true || el.props[def.key] === "true";
+            } else {
+                input = document.createElement("input");
+                input.type = "text";
+                input.value = String(el.props[def.key] == null ? "" : el.props[def.key]);
+            }
+            input.setAttribute("data-prop-key", def.key);
+            var update = function () {
+                if (def.type === "checkbox") el.props[def.key] = input.checked;
+                else el.props[def.key] = input.value;
+                uiUpdateCanvasLabel(el);
+            };
+            input.addEventListener("input", update);
+            input.addEventListener("change", update);
+            label.appendChild(input);
+            uiPropExtra.appendChild(label);
+        });
+    }
+
+    function uiRenderInteractions(el) {
+        if (!uiInteractions) return;
+        uiInteractions.innerHTML = "";
+        if (!uiDoc) return;
+        var list = uiDoc.connections.filter(function (conn) { return conn.from === el.id; });
+        if (!list.length) {
+            var empty = document.createElement("div");
+            empty.className = "ui-props-empty";
+            empty.textContent = "还没有交互，点击下方按钮或开启连线模式";
+            uiInteractions.appendChild(empty);
+            return;
+        }
+        list.forEach(function (conn) {
+            var row = document.createElement("div");
+            row.className = "ui-interaction-row";
+
+            var eventSelect = document.createElement("select");
+            UI_EVENTS.forEach(function (event) {
+                var option = document.createElement("option");
+                option.value = event;
+                option.textContent = UI_EVENT_LABELS[event] || event;
+                eventSelect.appendChild(option);
+            });
+            eventSelect.value = conn.event;
+            eventSelect.title = "触发事件";
+            eventSelect.addEventListener("change", function () {
+                conn.event = eventSelect.value;
+                uiRenderLogic();
+            });
+
+            var actionSelect = document.createElement("select");
+            UI_ACTIONS.forEach(function (action) {
+                var option = document.createElement("option");
+                option.value = action;
+                option.textContent = UI_ACTION_LABELS[action] || action;
+                actionSelect.appendChild(option);
+            });
+            actionSelect.value = conn.action;
+            actionSelect.title = "执行动作";
+            actionSelect.addEventListener("change", function () {
+                conn.action = actionSelect.value;
+                uiRenderInteractions(el);
+                uiRenderLogic();
+            });
+
+            var targetSelect = document.createElement("select");
+            targetSelect.innerHTML = uiElementOptionsHtml(null, conn.target, true);
+            targetSelect.value = conn.target || "";
+            targetSelect.title = "目标窗口或组件";
+            targetSelect.addEventListener("change", function () {
+                conn.target = targetSelect.value;
+                var isPageTarget = !!uiFindPage(uiDoc, conn.target);
+                if (isPageTarget && ["toggle", "show", "hide", "focus", "setText"].indexOf(conn.action) >= 0) {
+                    conn.action = "open";
+                } else if (!isPageTarget && ["open", "navigate"].indexOf(conn.action) >= 0) {
+                    conn.action = "toggle";
+                }
+                uiRenderInteractions(el);
+                uiRenderLogic();
+            });
+
+            var valueInput = document.createElement("input");
+            valueInput.type = "text";
+            valueInput.placeholder = "消息 / 设置文字";
+            valueInput.value = conn.value || "";
+            valueInput.addEventListener("input", function () { conn.value = valueInput.value; });
+
+            var remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "ui-interaction-remove";
+            remove.textContent = "✕";
+            remove.title = "删除该交互";
+            remove.addEventListener("click", function () {
+                uiDoc.connections = uiDoc.connections.filter(function (item) { return item !== conn; });
+                uiRenderInteractions(el);
+                uiRenderLogic();
+            });
+
+            row.appendChild(eventSelect);
+            row.appendChild(actionSelect);
+            row.appendChild(targetSelect);
+            row.appendChild(valueInput);
+            row.appendChild(remove);
+            uiInteractions.appendChild(row);
+        });
+    }
+
     function uiSyncPropInputs() {
         var el = uiSelectedElement();
         if (!el) return;
+        uiPropParent.innerHTML = uiParentOptions(el);
+        uiPropParent.value = el.parentId || "";
         uiPropText.value = el.text || "";
         uiPropSrc.value = (el.props && el.props.src) || "";
         uiPropNote.value = (el.props && el.props.note) || "";
@@ -2604,18 +4395,43 @@
         uiPropY.value = Math.round(el.y);
         uiPropW.value = Math.round(el.w);
         uiPropH.value = Math.round(el.h);
+        uiRenderExtraProps(el);
+        uiRenderInteractions(el);
+    }
+
+    function uiRenderPageProps() {
+        if (!uiPageProps || !uiLayout || !uiDoc) return;
+        uiPageName.value = uiLayout.name || "";
+        uiPageKind.value = uiLayout.kind || "window";
+        var parentOptions = '<option value="">无（顶级窗口）</option>';
+        var descendants = uiPageDescendants(uiDoc, uiLayout.id);
+        uiDoc.pages.forEach(function (page) {
+            if (page.id === uiLayout.id || descendants.indexOf(page) >= 0) return;
+            parentOptions += '<option value="' + escapeHtml(page.id) + '"' +
+                (page.id === uiLayout.parentId ? " selected" : "") + ">" +
+                escapeHtml(page.name || page.id) + "</option>";
+        });
+        uiPageParent.innerHTML = parentOptions;
+        uiPageParent.value = uiLayout.parentId || "";
+        if (uiPageX) uiPageX.value = Math.round(uiLayout.x || 0);
+        if (uiPageY) uiPageY.value = Math.round(uiLayout.y || 0);
+        uiPageOpen.checked = !!uiLayout.open;
+        uiPageStart.checked = uiDoc.start === uiLayout.id;
     }
 
     function uiRenderProps() {
         var el = uiSelectedElement();
         if (!el) {
-            uiPropsEmpty.hidden = false;
-            uiPropsFields.hidden = true;
-            uiPropType.textContent = "";
+            if (uiPageProps) uiPageProps.hidden = false;
+            if (uiPropsEmpty) uiPropsEmpty.hidden = true;
+            if (uiPropsFields) uiPropsFields.hidden = true;
+            uiPropType.textContent = "页面";
+            uiRenderPageProps();
             return;
         }
-        uiPropsEmpty.hidden = true;
-        uiPropsFields.hidden = false;
+        if (uiPageProps) uiPageProps.hidden = true;
+        if (uiPropsEmpty) uiPropsEmpty.hidden = true;
+        if (uiPropsFields) uiPropsFields.hidden = false;
         uiPropType.textContent = UI_TYPE_LABELS[el.type];
         uiSyncPropInputs();
     }
@@ -2624,9 +4440,13 @@
         uiSelectedId = id || null;
         var nodes = uiCanvas.querySelectorAll(".ui-canvas-el");
         for (var i = 0; i < nodes.length; i++) {
-            nodes[i].classList.toggle("selected", nodes[i].getAttribute("data-id") === uiSelectedId);
+            var nodeId = nodes[i].getAttribute("data-id");
+            nodes[i].classList.toggle("selected", nodeId === uiSelectedId);
+            nodes[i].classList.toggle("connect-source", nodeId === uiConnectFrom);
         }
         uiRenderProps();
+        uiRenderStructure();
+        uiRenderLogic();
     }
 
     function uiUpdateCanvasLabel(el) {
@@ -2649,10 +4469,18 @@
     }
 
     function uiApplyElementGeometry(el, x, y, w, h) {
-        w = Math.max(24, Math.min(uiLayout.width, Math.round(w)));
-        h = Math.max(18, Math.min(uiLayout.height, Math.round(h)));
-        x = Math.max(0, Math.min(uiLayout.width - w, Math.round(x)));
-        y = Math.max(0, Math.min(uiLayout.height - h, Math.round(y)));
+        if (!uiLayout) return;
+        var bounds = { x: 0, y: 0, width: uiLayout.width, height: uiLayout.height };
+        if (el.parentId) {
+            var parent = uiFindElement(uiLayout, el.parentId);
+            if (parent) {
+                bounds = { x: parent.x, y: parent.y, width: parent.w, height: parent.h };
+            }
+        }
+        w = Math.max(24, Math.min(bounds.width, Math.round(w)));
+        h = Math.max(18, Math.min(bounds.height, Math.round(h)));
+        x = Math.max(bounds.x, Math.min(bounds.x + bounds.width - w, Math.round(x)));
+        y = Math.max(bounds.y, Math.min(bounds.y + bounds.height - h, Math.round(y)));
         el.x = x;
         el.y = y;
         el.w = w;
@@ -2672,6 +4500,9 @@
         e.preventDefault();
         e.stopPropagation();
         var start = { x: el.x, y: el.y, w: el.w, h: el.h };
+        var children = uiElementDescendants(uiLayout, el.id).map(function (child) {
+            return { el: child, x: child.x, y: child.y };
+        });
         var startX = e.clientX;
         var startY = e.clientY;
         var oldCursor = document.body.style.cursor;
@@ -2685,6 +4516,17 @@
             var dy = Math.round((ev.clientY - startY) / 5) * 5;
             if (!dir) {
                 uiApplyElementGeometry(el, start.x + dx, start.y + dy, start.w, start.h);
+                var actualX = el.x - start.x;
+                var actualY = el.y - start.y;
+                children.forEach(function (child) {
+                    child.el.x = child.x + actualX;
+                    child.el.y = child.y + actualY;
+                    var childNode = uiCanvasNode(child.el.id);
+                    if (childNode) {
+                        childNode.style.left = child.el.x + "px";
+                        childNode.style.top = child.el.y + "px";
+                    }
+                });
                 return;
             }
             var x = start.x;
@@ -2720,7 +4562,10 @@
             document.removeEventListener("pointercancel", onUp);
             document.body.classList.remove("dialog-dragging");
             document.body.style.cursor = oldCursor;
+            if (dir) uiClampChildrenToParent(el);
             uiSyncPropInputs();
+            uiRenderStructure();
+            uiRenderLogic();
         }
 
         document.addEventListener("pointermove", onMove);
@@ -2728,19 +4573,65 @@
         document.addEventListener("pointercancel", onUp);
     }
 
+    function uiClampChildrenToParent(parent) {
+        if (!uiLayout || !uiIsContainerType(parent.type)) return;
+        uiElementDescendants(uiLayout, parent.id).forEach(function (child) {
+            var direct = child.parentId === parent.id;
+            var node = uiCanvasNode(child.id);
+            if (direct) {
+                child.w = Math.min(child.w, parent.w);
+                child.h = Math.min(child.h, parent.h);
+                child.x = Math.max(parent.x, Math.min(parent.x + parent.w - child.w, child.x));
+                child.y = Math.max(parent.y, Math.min(parent.y + parent.h - child.h, child.y));
+            }
+            if (node) {
+                node.style.left = child.x + "px";
+                node.style.top = child.y + "px";
+                node.style.width = child.w + "px";
+                node.style.height = child.h + "px";
+            }
+        });
+    }
+
+    function uiNudgeElement(el, dx, dy) {
+        if (!uiLayout || !el) return;
+        var children = uiElementDescendants(uiLayout, el.id).map(function (child) {
+            return { el: child, x: child.x, y: child.y };
+        });
+        var startX = el.x;
+        var startY = el.y;
+        uiApplyElementGeometry(el, startX + dx, startY + dy, el.w, el.h);
+        var actualX = el.x - startX;
+        var actualY = el.y - startY;
+        children.forEach(function (child) {
+            child.el.x = child.x + actualX;
+            child.el.y = child.y + actualY;
+            var childNode = uiCanvasNode(child.el.id);
+            if (childNode) {
+                childNode.style.left = child.el.x + "px";
+                childNode.style.top = child.el.y + "px";
+            }
+        });
+        uiRenderLogic();
+        uiRenderStructure();
+    }
+
     function uiRenderEditor() {
         if (!uiCanvas || !uiLayout) return;
         uiCanvas.style.width = uiLayout.width + "px";
         uiCanvas.style.height = uiLayout.height + "px";
         uiCanvas.innerHTML = "";
-        uiLayout.elements.forEach(function (el) {
+        uiSortedElements(uiLayout).forEach(function (el) {
             uiCanvas.appendChild(buildUiCanvasElement(el));
         });
         uiEditorSize.textContent = uiLayout.width + " × " + uiLayout.height;
         uiCanvasWidth.value = uiLayout.width;
         uiCanvasHeight.value = uiLayout.height;
         if (uiSelectedId && !uiSelectedElement()) uiSelectedId = null;
+        uiRenderPageTabs();
+        uiRenderStructure();
         uiRenderProps();
+        uiRenderLogic();
     }
 
     function addUiElement(type) {
@@ -2748,31 +4639,60 @@
         var size = UI_DEFAULT_SIZE[type] || [200, 100];
         var w = Math.min(size[0], uiLayout.width);
         var h = Math.min(size[1], uiLayout.height);
-        var pos = uiDefaultPosition(type, w, h);
+        var selected = uiSelectedElement();
+        var parent = null;
+        if (selected && uiIsContainerType(selected.type) && uiCanContain(selected.type, type)) {
+            parent = selected;
+        } else if (selected && selected.parentId) {
+            var siblingParent = uiFindElement(uiLayout, selected.parentId);
+            if (siblingParent && uiCanContain(siblingParent.type, type)) parent = siblingParent;
+        }
+        var pos;
+        if (parent) {
+            w = Math.min(w, parent.w);
+            h = Math.min(h, parent.h);
+            pos = [parent.x + Math.min(20, parent.w - w), parent.y + Math.min(32, parent.h - h)];
+        } else {
+            pos = uiDefaultPosition(type, w, h);
+        }
         var el = {
             id: "e" + (++uiElementSeq),
             type: type,
+            parentId: parent ? parent.id : "",
             x: pos[0], y: pos[1], w: w, h: h,
             text: "",
-            props: { src: "", note: "" }
+            props: {}
         };
-        if (type === "page") {
+        if (type === "page" && !parent) {
             uiLayout.elements.unshift(el);
         } else {
             uiLayout.elements.push(el);
         }
         uiSelectedId = el.id;
         uiRenderEditor();
-        uiEditorHint.textContent = "已添加 " + UI_TYPE_LABELS[type] + "；可在右侧修改文字、资源与尺寸";
+        uiEditorHint.textContent = parent
+            ? "已添加 " + UI_TYPE_LABELS[type] + " 到「" + (parent.text || UI_TYPE_LABELS[parent.type]) + "」"
+            : "已添加 " + UI_TYPE_LABELS[type] + "；可在右侧修改属性与交互";
         var node = uiCanvasNode(el.id);
         if (node && node.scrollIntoView) node.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
 
     function deleteUiSelected() {
         if (!uiLayout || !uiSelectedId) return;
-        uiLayout.elements = uiLayout.elements.filter(function (el) { return el.id !== uiSelectedId; });
+        var victims = [uiSelectedId].concat(uiElementDescendants(uiLayout, uiSelectedId).map(function (el) {
+            return el.id;
+        }));
+        uiLayout.elements = uiLayout.elements.filter(function (el) {
+            return victims.indexOf(el.id) < 0;
+        });
+        if (uiDoc) {
+            uiDoc.connections = uiDoc.connections.filter(function (conn) {
+                return victims.indexOf(conn.from) < 0 && victims.indexOf(conn.target) < 0;
+            });
+        }
         uiSelectedId = null;
         uiRenderEditor();
+        uiEditorHint.textContent = "已删除选中组件及其子组件";
     }
 
     function applyUiCanvasSize() {
@@ -2786,6 +4706,9 @@
             el.h = Math.min(el.h, h);
             el.x = Math.min(el.x, w - el.w);
             el.y = Math.min(el.y, h - el.h);
+        });
+        uiLayout.elements.forEach(function (el) {
+            if (uiIsContainerType(el.type)) uiClampChildrenToParent(el);
         });
         uiRenderEditor();
         uiEditorHint.textContent = "画布尺寸已调整为 " + w + " × " + h;
@@ -2805,6 +4728,282 @@
             uiApplyElementGeometry(el, x, y, w, h);
         }
         uiUpdateCanvasLabel(el);
+        uiRenderStructure();
+    }
+
+    function uiAddPage() {
+        if (!uiDoc) return;
+        var index = uiDoc.pages.length + 1;
+        var page = {
+            id: "p" + (++uiPageSeq),
+            name: "页面 " + index,
+            kind: "window",
+            parentId: "",
+            open: false,
+            x: 0,
+            y: 0,
+            width: 960,
+            height: 600,
+            elements: []
+        };
+        while (uiFindPage(uiDoc, page.id)) page.id = "p" + (++uiPageSeq);
+        uiDoc.pages.push(page);
+        uiSwitchPage(page.id);
+        uiEditorHint.textContent = "已创建「" + page.name + "」；可在右侧设置窗口归属和启动页";
+    }
+
+    function uiDeletePage() {
+        if (!uiDoc || !uiLayout) return;
+        if (uiDoc.pages.length <= 1) {
+            uiEditorHint.textContent = "至少保留一个页面";
+            return;
+        }
+        var children = uiDoc.pages.filter(function (page) { return page.parentId === uiLayout.id; });
+        if (children.length) {
+            uiEditorHint.textContent = "该页面还有 " + children.length + " 个子窗口，请先调整它们的所属窗口";
+            return;
+        }
+        var removed = uiLayout;
+        var index = uiPageIndexById(removed.id);
+        uiDoc.pages = uiDoc.pages.filter(function (page) { return page.id !== removed.id; });
+        uiDoc.connections = uiDoc.connections.filter(function (conn) {
+            var targetOk = uiFindPage(uiDoc, conn.target) || uiFindElementAnywhere(uiDoc, conn.target);
+            var fromOk = uiFindElementAnywhere(uiDoc, conn.from);
+            return !!targetOk && !!fromOk;
+        });
+        if (uiDoc.start === removed.id) uiDoc.start = uiDoc.pages[0].id;
+        uiSwitchPage(uiDoc.pages[Math.max(0, index - 1)].id);
+        uiEditorHint.textContent = "已删除页面「" + removed.name + "」";
+    }
+
+    function uiReparentElement() {
+        var el = uiSelectedElement();
+        if (!el || !uiLayout) return;
+        var parentId = uiPropParent.value;
+        if (parentId) {
+            var parent = uiFindElement(uiLayout, parentId);
+            if (!parent || !uiIsContainerType(parent.type) || !uiCanContain(parent.type, el.type) ||
+                uiElementDescendants(uiLayout, el.id).indexOf(parent) >= 0) {
+                uiEditorHint.textContent = "「" + UI_TYPE_LABELS[parent ? parent.type : "?"] +
+                    "」不能包含「" + UI_TYPE_LABELS[el.type] + "」";
+                uiPropParent.value = el.parentId || "";
+                return;
+            }
+            el.parentId = parent.id;
+            uiApplyElementGeometry(el, parent.x + Math.min(16, parent.w - el.w),
+                parent.y + Math.min(28, parent.h - el.h), el.w, el.h);
+        } else {
+            el.parentId = "";
+            uiApplyElementGeometry(el, el.x, el.y, el.w, el.h);
+        }
+        uiRenderEditor();
+        uiEditorHint.textContent = "已调整所属容器";
+    }
+
+    function uiAddInteraction() {
+        var el = uiSelectedElement();
+        if (!el || !uiDoc) return;
+        var targetPage = uiDoc.pages.filter(function (page) { return page.id !== uiLayout.id; })[0];
+        var targetEl = uiLayout.elements.filter(function (item) { return item.id !== el.id; })[0];
+        var target = targetPage ? targetPage.id : (targetEl ? targetEl.id : "");
+        if (!target) {
+            uiEditorHint.textContent = "请先创建另一个页面或组件作为交互目标";
+            return;
+        }
+        uiCreateConnection(el.id, target, targetPage ? "open" : "toggle", "click");
+    }
+
+    function uiCreateConnection(fromId, targetId, action, eventName) {
+        if (!uiDoc || !fromId || !targetId) return;
+        var targetPage = uiFindPage(uiDoc, targetId);
+        var targetInfo = targetPage ? null : uiFindElementAnywhere(uiDoc, targetId);
+        if (!targetPage && !targetInfo) return;
+        var conn = {
+            id: "c" + (++uiConnSeq),
+            from: String(fromId),
+            event: UI_EVENTS.indexOf(eventName) >= 0 ? eventName : "click",
+            action: UI_ACTIONS.indexOf(action) >= 0 ? action : (targetPage ? "open" : "toggle"),
+            target: String(targetId),
+            value: ""
+        };
+        uiDoc.connections.push(conn);
+        uiRenderLogic();
+        uiRenderProps();
+        uiEditorHint.textContent = "已创建交互：" + (UI_EVENT_LABELS[conn.event] || conn.event) +
+            " → " + (UI_ACTION_LABELS[conn.action] || conn.action) +
+            " · " + (targetPage ? targetPage.name : (targetInfo.element.text || targetInfo.element.id));
+    }
+
+    function uiCreateConnectionTo(targetId) {
+        if (!uiConnectFrom) return;
+        var from = uiConnectFrom;
+        var targetPage = uiFindPage(uiDoc, targetId);
+        uiCreateConnection(from, targetId, targetPage ? "open" : "toggle", "click");
+        uiConnectFrom = null;
+        uiRenderEditor();
+        uiUpdateConnectButton();
+    }
+
+    function uiUpdateConnectButton() {
+        if (!uiConnectToggle) return;
+        uiConnectToggle.classList.toggle("active", uiConnectMode);
+        uiConnectToggle.textContent = uiConnectMode
+            ? (uiConnectFrom ? "选择目标…（取消）" : "连线中…（取消）")
+            : "开始连线";
+    }
+
+    function uiToggleConnect() {
+        uiConnectMode = !uiConnectMode;
+        uiConnectFrom = null;
+        if (uiConnectMode && !uiLogicOn) {
+            uiLogicOn = true;
+            if (uiLogicToggle) uiLogicToggle.classList.add("active");
+        }
+        uiRenderLogic();
+        uiUpdateConnectButton();
+        uiEditorHint.textContent = uiConnectMode
+            ? "连线模式：先点击源控件，再点击目标控件或页面标签"
+            : "已退出连线模式";
+    }
+
+    function uiToggleLogic() {
+        uiLogicOn = !uiLogicOn;
+        if (uiLogicToggle) uiLogicToggle.classList.toggle("active", uiLogicOn);
+        if (!uiLogicOn) {
+            uiConnectMode = false;
+            uiConnectFrom = null;
+            uiUpdateConnectButton();
+        }
+        uiRenderLogic();
+        uiEditorHint.textContent = uiLogicOn ? "逻辑连线已显示；可开启连线模式创建交互" : "逻辑连线已隐藏";
+    }
+
+    function uiLogicChipPoint(pageId) {
+        var index = uiPageIndexById(pageId);
+        if (index < 0) index = 0;
+        return {
+            x: uiLayout.width - 18,
+            y: 28 + index * 34
+        };
+    }
+
+    function uiRenderLogic() {
+        if (!uiCanvas || !uiLayout) return;
+        var oldSvg = uiCanvas.querySelector(".ui-logic-svg");
+        if (oldSvg) oldSvg.parentNode.removeChild(oldSvg);
+        var oldChips = uiCanvas.querySelector(".ui-logic-targets");
+        if (oldChips) oldChips.parentNode.removeChild(oldChips);
+        if (!uiLogicOn || !uiDoc) return;
+
+        var chips = document.createElement("div");
+        chips.className = "ui-logic-targets";
+        var chipRects = {};
+        uiDoc.pages.forEach(function (page, index) {
+            var chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "ui-logic-chip" + (page.id === uiLayout.id ? " current" : "");
+            chip.setAttribute("data-page-id", page.id);
+            chip.textContent = (page.kind === "dialog" ? "◈ " : "▣ ") + (page.name || page.id);
+            chip.style.top = (12 + index * 34) + "px";
+            chip.title = "点击连接到页面 / 窗口：" + (page.name || page.id);
+            chip.addEventListener("click", function (e) {
+                e.stopPropagation();
+                if (uiConnectFrom) uiCreateConnectionTo(page.id);
+                else if (page.id !== uiLayout.id) uiSwitchPage(page.id);
+            });
+            chips.appendChild(chip);
+            chipRects[page.id] = {
+                x: uiLayout.width - 18,
+                y: 26 + index * 34
+            };
+        });
+        uiCanvas.appendChild(chips);
+
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "ui-logic-svg");
+        svg.setAttribute("viewBox", "0 0 " + uiLayout.width + " " + uiLayout.height);
+        svg.setAttribute("width", uiLayout.width);
+        svg.setAttribute("height", uiLayout.height);
+        var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        defs.innerHTML = '<marker id="ui-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">' +
+            '<path d="M0,0 L8,4 L0,8 z" fill="#0969da"></path></marker>';
+        svg.appendChild(defs);
+
+        uiDoc.connections.forEach(function (conn) {
+            var from = uiFindElement(uiLayout, conn.from);
+            if (!from) return;
+            var targetPage = uiFindPage(uiDoc, conn.target);
+            var targetInfo = targetPage ? null : uiFindElementAnywhere(uiDoc, conn.target);
+            var target;
+            if (targetPage) {
+                target = chipRects[targetPage.id];
+            } else if (targetInfo && targetInfo.page === uiLayout) {
+                target = {
+                    x: targetInfo.element.x + targetInfo.element.w / 2,
+                    y: targetInfo.element.y + targetInfo.element.h / 2
+                };
+            } else if (targetInfo) {
+                target = chipRects[targetInfo.page.id];
+            } else if (conn.action === "alert") {
+                target = {
+                    x: Math.min(uiLayout.width - 18, from.x + from.w + 44),
+                    y: from.y + from.h / 2
+                };
+            } else if (conn.action === "back") {
+                target = chipRects[uiLayout.parentId || uiLayout.id] || chipRects[uiLayout.id];
+            } else if (conn.action === "close") {
+                target = chipRects[uiLayout.id];
+            }
+            if (!target) return;
+            var sx = from.x + from.w;
+            var sy = from.y + from.h / 2;
+            var tx = target.x;
+            var ty = target.y;
+            var midX = (sx + tx) / 2;
+            var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", "M" + sx + "," + sy + " C" + (sx + 50) + "," + sy +
+                " " + (tx - 50) + "," + ty + " " + tx + "," + ty);
+            path.setAttribute("class", "ui-logic-line action-" + conn.action +
+                (targetPage || (targetInfo && targetInfo.page !== uiLayout) ? " page-link" : ""));
+            path.setAttribute("marker-end", "url(#ui-arrow)");
+            path.addEventListener("click", function (e) {
+                e.stopPropagation();
+                uiSelectElement(conn.from);
+                uiEditorHint.textContent = "连线：" + (UI_EVENT_LABELS[conn.event] || conn.event) +
+                    " → " + (UI_ACTION_LABELS[conn.action] || conn.action) +
+                    " · 可在右侧修改或删除";
+            });
+            svg.appendChild(path);
+            var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            label.setAttribute("x", midX);
+            label.setAttribute("y", (sy + ty) / 2 - 5);
+            label.setAttribute("class", "ui-logic-label");
+            label.textContent = (UI_EVENT_LABELS[conn.event] || conn.event) + "→" +
+                (UI_ACTION_LABELS[conn.action] || conn.action);
+            svg.appendChild(label);
+        });
+
+        uiDoc.pages.forEach(function (page) {
+            if (!page.parentId || !chipRects[page.parentId] || !chipRects[page.id]) return;
+            var parentPoint = chipRects[page.parentId];
+            var childPoint = chipRects[page.id];
+            var line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            line.setAttribute("d", "M" + parentPoint.x + "," + parentPoint.y +
+                " C" + (parentPoint.x + 18) + "," + parentPoint.y +
+                " " + (childPoint.x + 18) + "," + childPoint.y +
+                " " + childPoint.x + "," + childPoint.y);
+            line.setAttribute("class", "ui-logic-ownership");
+            svg.appendChild(line);
+            var ownerLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            ownerLabel.setAttribute("x", childPoint.x - 6);
+            ownerLabel.setAttribute("y", (parentPoint.y + childPoint.y) / 2);
+            ownerLabel.setAttribute("text-anchor", "end");
+            ownerLabel.setAttribute("class", "ui-logic-label ownership-label");
+            ownerLabel.textContent = "窗口归属";
+            svg.appendChild(ownerLabel);
+        });
+
+        uiCanvas.insertBefore(svg, uiCanvas.firstChild);
     }
 
     function openUiEditor(index, source) {
@@ -2813,24 +5012,48 @@
         if (parsed !== null && isNaN(parsed)) parsed = null;
         uiEditIndex = parsed;
         uiSelectedId = null;
+        uiLogicOn = false;
+        uiConnectMode = false;
+        uiConnectFrom = null;
 
         if (uiEditIndex === null) {
-            uiLayout = { width: 960, height: 600, elements: [] };
+            uiDoc = {
+                version: 2,
+                start: "p1",
+                pages: [{
+                    id: "p1", name: "主窗口", kind: "window", parentId: "",
+                    open: true, x: 24, y: 24, width: 960, height: 600, elements: []
+                }],
+                connections: []
+            };
+            uiLayout = uiDoc.pages[0];
             uiElementSeq = 0;
-            uiEditorTitle.textContent = "插入 UI 布局";
-            uiEditorHint.textContent = "从左侧添加组件；Ctrl+Enter 应用 · Esc 取消";
+            uiPageSeq = 1;
+            uiConnSeq = 0;
+            uiEditorTitle.textContent = "插入 UI 原型";
+            uiEditorHint.textContent = "从左侧添加组件；先选择容器可把组件放入容器；Ctrl+Enter 应用 · Esc 取消";
         } else {
-            var layout = parseUiLayout(source || "");
-            if (!layout) {
-                postMessage({ type: "status", text: "UI 布局 JSON 解析失败，请先修正代码块" });
+            var doc = parseUiLayout(source || "");
+            if (!doc) {
+                postMessage({ type: "status", text: "UI 原型 JSON 解析失败，请先修正代码块" });
                 return;
             }
-            uiLayout = layout;
-            uiElementSeq = uiMaxElementSeq(layout.elements);
-            uiEditorTitle.textContent = "编辑 UI 布局";
-            uiEditorHint.textContent = "拖动组件移动，拖动角点缩放；Ctrl+Enter 应用 · Esc 取消";
+            uiDoc = doc;
+            uiLayout = uiFindPage(doc, doc.start) || doc.pages[0];
+            uiElementSeq = uiMaxElementSeqForDoc(doc);
+            uiPageSeq = uiMaxPageSeq(doc);
+            uiConnSeq = 0;
+            doc.connections.forEach(function (conn) {
+                var m = /^c(\d+)$/.exec(String(conn.id || ""));
+                if (m) uiConnSeq = Math.max(uiConnSeq, parseInt(m[1], 10));
+            });
+            uiEditorTitle.textContent = "编辑 UI 原型";
+            uiEditorHint.textContent = "多页面 / 窗口归属 / 交互连线；Ctrl+Enter 应用 · Esc 取消";
+            uiLogicOn = doc.connections.length > 0 || doc.pages.length > 1;
         }
 
+        if (uiLogicToggle) uiLogicToggle.classList.toggle("active", uiLogicOn);
+        uiUpdateConnectButton();
         uiEditor.hidden = false;
         uiRenderEditor();
         layoutFloatingDialog(uiEditor, uiEditorBox);
@@ -2842,9 +5065,13 @@
     function closeUiEditor() {
         if (!uiEditor) return;
         uiEditor.hidden = true;
+        uiDoc = null;
         uiLayout = null;
         uiSelectedId = null;
         uiEditIndex = null;
+        uiLogicOn = false;
+        uiConnectMode = false;
+        uiConnectFrom = null;
         if (viewMode !== "preview") cm.focus();
     }
 
@@ -2868,6 +5095,11 @@
         document.getElementById("ui-editor-apply").addEventListener("click", applyUiEditor);
         document.getElementById("ui-canvas-size-apply").addEventListener("click", applyUiCanvasSize);
         document.getElementById("ui-delete-el").addEventListener("click", deleteUiSelected);
+        if (uiPageAdd) uiPageAdd.addEventListener("click", uiAddPage);
+        if (uiPageDelete) uiPageDelete.addEventListener("click", uiDeletePage);
+        if (uiLogicToggle) uiLogicToggle.addEventListener("click", uiToggleLogic);
+        if (uiConnectToggle) uiConnectToggle.addEventListener("click", uiToggleConnect);
+        if (uiAddInteractionBtn) uiAddInteractionBtn.addEventListener("click", uiAddInteraction);
 
         uiPalette.addEventListener("click", function (e) {
             var btn = e.target && e.target.closest ? e.target.closest("button[data-type]") : null;
@@ -2875,19 +5107,40 @@
         });
 
         uiCanvas.addEventListener("pointerdown", function (e) {
+            var chip = e.target && e.target.closest ? e.target.closest(".ui-logic-chip") : null;
+            if (chip) return;
             var node = e.target && e.target.closest ? e.target.closest(".ui-canvas-el") : null;
             if (!node) {
-                uiSelectElement(null);
+                if (uiConnectMode && uiConnectFrom) {
+                    uiConnectFrom = null;
+                    uiUpdateConnectButton();
+                    uiSelectElement(null);
+                    uiEditorHint.textContent = "已取消连线源，请重新选择源控件";
+                } else {
+                    uiSelectElement(null);
+                }
                 return;
             }
-            var el = null;
-            for (var i = 0; i < uiLayout.elements.length; i++) {
-                if (uiLayout.elements[i].id === node.getAttribute("data-id")) {
-                    el = uiLayout.elements[i];
-                    break;
-                }
-            }
+            var el = uiFindElement(uiLayout, node.getAttribute("data-id"));
             if (!el) return;
+            if (uiConnectMode) {
+                if (!uiConnectFrom) {
+                    uiConnectFrom = el.id;
+                    uiSelectedId = el.id;
+                    uiUpdateConnectButton();
+                    uiSelectElement(el.id);
+                    uiEditorHint.textContent = "已选择源控件「" + (el.text || UI_TYPE_LABELS[el.type]) +
+                        "」，现在点击目标控件或页面标签";
+                } else if (uiConnectFrom === el.id) {
+                    uiConnectFrom = null;
+                    uiUpdateConnectButton();
+                    uiSelectElement(el.id);
+                    uiEditorHint.textContent = "已取消连线源";
+                } else {
+                    uiCreateConnectionTo(el.id);
+                }
+                return;
+            }
             uiSelectElement(el.id);
             uiCanvas.focus();
             var handle = e.target.closest ? e.target.closest(".ui-canvas-resize") : null;
@@ -2899,6 +5152,8 @@
             if (!el) return;
             el.text = uiPropText.value;
             uiUpdateCanvasLabel(el);
+            uiRenderStructure();
+            uiRenderLogic();
         });
         uiPropSrc.addEventListener("input", function () {
             var el = uiSelectedElement();
@@ -2910,8 +5165,64 @@
             el.props.note = uiPropNote.value;
             uiUpdateCanvasLabel(el);
         });
+        if (uiPropParent) uiPropParent.addEventListener("change", uiReparentElement);
         [uiPropX, uiPropY, uiPropW, uiPropH].forEach(function (input) {
             input.addEventListener("change", uiSyncPropsFromFields);
+        });
+
+        if (uiPageName) uiPageName.addEventListener("input", function () {
+            if (!uiLayout) return;
+            uiLayout.name = uiPageName.value;
+            uiRenderPageTabs();
+            uiRenderStructure();
+        });
+        if (uiPageKind) uiPageKind.addEventListener("change", function () {
+            if (!uiLayout) return;
+            uiLayout.kind = uiPageKind.value === "dialog" ? "dialog" : "window";
+            uiRenderPageTabs();
+        });
+        if (uiPageParent) uiPageParent.addEventListener("change", function () {
+            if (!uiLayout || !uiDoc) return;
+            var parentId = uiPageParent.value;
+            if (parentId) {
+                var descendants = uiPageDescendants(uiDoc, uiLayout.id);
+                if (parentId === uiLayout.id || descendants.some(function (page) { return page.id === parentId; })) {
+                    uiEditorHint.textContent = "窗口归属不能形成循环";
+                    uiPageParent.value = uiLayout.parentId || "";
+                    return;
+                }
+            }
+            uiLayout.parentId = parentId;
+            uiRenderPageTabs();
+            uiRenderLogic();
+        });
+        if (uiPageOpen) uiPageOpen.addEventListener("change", function () {
+            if (!uiLayout) return;
+            uiLayout.open = uiPageOpen.checked;
+            uiRenderPageTabs();
+        });
+        [uiPageX, uiPageY].forEach(function (input) {
+            if (!input) return;
+            input.addEventListener("change", function () {
+                if (!uiLayout) return;
+                uiLayout.x = Math.max(0, parseInt(uiPageX.value, 10) || 0);
+                uiLayout.y = Math.max(0, parseInt(uiPageY.value, 10) || 0);
+                uiPageX.value = uiLayout.x;
+                uiPageY.value = uiLayout.y;
+            });
+        });
+        if (uiPageStart) uiPageStart.addEventListener("change", function () {
+            if (!uiLayout || !uiDoc) return;
+            if (uiPageStart.checked) {
+                uiDoc.start = uiLayout.id;
+                uiLayout.open = true;
+                if (uiPageOpen) uiPageOpen.checked = true;
+            } else if (uiDoc.start === uiLayout.id) {
+                var other = uiDoc.pages.filter(function (page) { return page.id !== uiLayout.id; })[0];
+                if (other) uiDoc.start = other.id;
+                else uiPageStart.checked = true;
+            }
+            uiRenderPageTabs();
         });
 
         uiCanvasWidth.addEventListener("keydown", function (e) {
@@ -2930,7 +5241,11 @@
             if (e.key === "Escape") {
                 e.preventDefault();
                 e.stopPropagation();
-                closeUiEditor();
+                if (uiConnectMode) {
+                    uiToggleConnect();
+                } else {
+                    closeUiEditor();
+                }
             } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2945,11 +5260,9 @@
                 var el = uiSelectedElement();
                 if (!el) return;
                 var step = e.shiftKey ? 10 : 1;
-                if (e.key === "ArrowLeft") el.x -= step;
-                if (e.key === "ArrowRight") el.x += step;
-                if (e.key === "ArrowUp") el.y -= step;
-                if (e.key === "ArrowDown") el.y += step;
-                uiApplyElementGeometry(el, el.x, el.y, el.w, el.h);
+                var dx = e.key === "ArrowLeft" ? -step : (e.key === "ArrowRight" ? step : 0);
+                var dy = e.key === "ArrowUp" ? -step : (e.key === "ArrowDown" ? step : 0);
+                uiNudgeElement(el, dx, dy);
             }
         });
 

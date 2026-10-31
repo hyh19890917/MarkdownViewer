@@ -349,9 +349,9 @@
                     <Button Style="{StaticResource RibbonButton}" Content="插入流程图"
                             Click="InsertMermaid_Click"
                             ToolTip="打开 Mermaid 编辑器，双击已有图表也可编辑"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入 UI 布局"
+                    <Button Style="{StaticResource RibbonButton}" Content="插入 UI 原型"
                             Click="InsertUiLayout_Click"
-                            ToolTip="打开 UI 布局设计器，双击已有布局也可编辑"/>
+                            ToolTip="打开多页面 UI 原型设计器：容器层级、窗口归属、打开关闭与逻辑连线"/>
                     <Button Style="{StaticResource RibbonButton}" Content="插入代码块"
                             Click="InsertCodeBlock_Click"/>
                     <Button Style="{StaticResource RibbonButton}" Content="插入任务列表"

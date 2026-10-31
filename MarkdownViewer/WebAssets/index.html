@@ -165,11 +165,11 @@
     </div>
 </div>
 
-<!-- UI 布局可视化设计弹窗 -->
+<!-- UI 原型可视化设计弹窗 -->
 <div id="ui-editor" class="mermaid-editor ui-editor" hidden>
     <div class="mermaid-editor-box">
         <div class="mermaid-editor-head">
-            <span id="ui-editor-title">UI 布局设计</span>
+            <span id="ui-editor-title">UI 原型设计</span>
             <button id="ui-editor-close" type="button" title="关闭（Esc）">✕</button>
         </div>
         <div class="ui-editor-toolbar">
@@ -181,11 +181,16 @@
             <span id="ui-editor-size" class="ui-editor-size">960 × 600</span>
             <span class="ui-editor-tip">拖动组件移动，拖动角点缩放；Delete 删除</span>
         </div>
+        <div class="ui-page-bar">
+            <div id="ui-page-tabs" class="ui-page-tabs"></div>
+            <button id="ui-page-add" type="button">+ 新页面</button>
+            <button id="ui-logic-toggle" type="button" title="显示控件与页面之间的逻辑连线">逻辑连线</button>
+            <button id="ui-connect-toggle" type="button" title="依次点击源控件和目标控件/页面创建连线">开始连线</button>
+        </div>
         <div class="ui-editor-body">
             <div class="ui-toolbox">
                 <div class="ui-toolbox-title">添加组件</div>
                 <div id="ui-palette" class="ui-palette">
-                    <button type="button" data-type="page">页面</button>
                     <button type="button" data-type="navbar">导航栏</button>
                     <button type="button" data-type="sidebar">侧边栏</button>
                     <button type="button" data-type="content">内容区</button>
@@ -208,16 +213,42 @@
                     <button type="button" data-type="gif">GIF</button>
                 </div>
                 <div class="ui-toolbox-tip">
-                    布局以画布像素描述；组件位置和尺寸会写入 ```ui JSON 代码块。
+                    多页面 = 多个窗口；先选中容器再添加组件即可建立层级。交互和窗口归属会写入 ```ui JSON 代码块。
                 </div>
+                <div class="ui-toolbox-title ui-structure-title">层级结构</div>
+                <div id="ui-structure" class="ui-structure"></div>
             </div>
             <div id="ui-canvas-wrap" class="ui-canvas-wrap">
                 <div id="ui-canvas" class="ui-canvas" tabindex="0"></div>
             </div>
             <div class="ui-props">
                 <div class="ui-toolbox-title">属性 <span id="ui-prop-type" class="ui-prop-type"></span></div>
-                <div id="ui-props-empty" class="ui-props-empty">选择一个组件以编辑属性</div>
+                <div id="ui-page-props" class="ui-page-props">
+                    <label class="ui-field">页面名称
+                        <input id="ui-page-name" type="text" maxlength="60"/>
+                    </label>
+                    <label class="ui-field">窗口类型
+                        <select id="ui-page-kind">
+                            <option value="window">普通窗口</option>
+                            <option value="dialog">对话框</option>
+                        </select>
+                    </label>
+                    <label class="ui-field">所属窗口
+                        <select id="ui-page-parent"></select>
+                    </label>
+                    <div class="ui-prop-grid">
+                        <label>X <input id="ui-page-x" type="number" step="1" min="0"/></label>
+                        <label>Y <input id="ui-page-y" type="number" step="1" min="0"/></label>
+                    </div>
+                    <label class="ui-check-field"><input id="ui-page-open" type="checkbox"/> 初始打开</label>
+                    <label class="ui-check-field"><input id="ui-page-start" type="checkbox"/> 设为启动页</label>
+                    <button id="ui-page-delete" type="button" class="ui-danger-btn">删除当前页面</button>
+                </div>
+                <div id="ui-props-empty" class="ui-props-empty" hidden>选择一个组件以编辑属性</div>
                 <div id="ui-props-fields" hidden>
+                    <label class="ui-field">所属容器
+                        <select id="ui-prop-parent"></select>
+                    </label>
                     <label class="ui-field">文字 / 标题
                         <input id="ui-prop-text" type="text" maxlength="120"/>
                     </label>
@@ -229,13 +260,19 @@
                         <input id="ui-prop-note" type="text" maxlength="160"
                                placeholder="组件说明或交互备注"/>
                     </label>
+                    <div id="ui-prop-extra" class="ui-prop-extra"></div>
                     <div class="ui-prop-grid">
                         <label>X <input id="ui-prop-x" type="number" step="1"/></label>
                         <label>Y <input id="ui-prop-y" type="number" step="1"/></label>
                         <label>宽 <input id="ui-prop-w" type="number" step="1"/></label>
                         <label>高 <input id="ui-prop-h" type="number" step="1"/></label>
                     </div>
-                    <button id="ui-delete-el" type="button">删除选中组件</button>
+                    <div class="ui-props-section">
+                        <div class="ui-props-section-title">交互 / 逻辑</div>
+                        <div id="ui-interactions" class="ui-interactions"></div>
+                        <button id="ui-add-interaction" type="button">+ 添加交互</button>
+                    </div>
+                    <button id="ui-delete-el" type="button" class="ui-danger-btn">删除选中组件</button>
                 </div>
             </div>
         </div>
