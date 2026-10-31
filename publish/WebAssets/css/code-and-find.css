@@ -1440,6 +1440,24 @@ body.theme-dark .markdown-body .table-edit-btn {
 }
 .ui-check-field input { width: auto; }
 .ui-prop-extra { display: flex; flex-direction: column; gap: 8px; }
+.ui-field-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+.ui-field-row input { flex: 1; min-width: 0; }
+.ui-field-row button {
+    flex: none;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #24292f;
+    font-size: 12px;
+    cursor: pointer;
+}
+.ui-field-row button:hover { border-color: #0969da; color: #0969da; }
+body.theme-dark .ui-field-row button { background: #37373d; border-color: #3c3c3c; color: #e6edf3; }
+body.theme-dark .ui-field-row button:hover { border-color: #4daafc; color: #4daafc; }
+body.theme-green .ui-field-row button { background: #d6efd8; border-color: #93c59c; color: #233423; }
+body.theme-green .ui-field-row button:hover { border-color: #1a7f37; color: #1a7f37; }
 .ui-props-section { margin-top: 10px; padding-top: 9px; border-top: 1px solid #d0d7de; }
 .ui-props-section-title { margin-bottom: 6px; font-size: 12px; font-weight: 600; }
 .ui-interactions { display: flex; flex-direction: column; gap: 5px; margin-bottom: 6px; }

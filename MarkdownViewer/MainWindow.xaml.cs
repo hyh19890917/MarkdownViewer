@@ -1663,6 +1663,9 @@ namespace MarkdownViewer
                 case "searchFolder":
                     SearchInFolder_Click(this, new RoutedEventArgs());
                     break;
+                case "pickResource":
+                    PickResource();
+                    break;
             }
         }
 
@@ -2166,6 +2169,61 @@ namespace MarkdownViewer
             catch (Exception ex)
             {
                 Logger.Error("打开打印对话框失败", ex);
+            }
+        }
+
+        /// <summary>为 UI 原型控件的「资源路径」打开文件选择器，返回相对路径（必要时复制到 assets）。</summary>
+        private void PickResource()
+        {
+            var tab = CurrentTab;
+            var dlg = new OpenFileDialog
+            {
+                Title = "选择控件资源",
+                Filter = "资源文件 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.obj;*.stl;*.glb;*.json;*.csv;*.txt;*.mp4;*.webm)|" +
+                         "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.obj;*.stl;*.glb;*.json;*.csv;*.txt;*.mp4;*.webm|" +
+                         "所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != true)
+            {
+                PostToWeb(new { type = "resourcePicked", path = "" });
+                return;
+            }
+            try
+            {
+                var path = dlg.FileName;
+                if (tab != null && !string.IsNullOrEmpty(tab.FilePath))
+                {
+                    var dir = Path.GetDirectoryName(tab.FilePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        var full = Path.GetFullPath(path);
+                        var baseFull = Path.GetFullPath(dir);
+                        var prefix = baseFull.EndsWith(Path.DirectorySeparatorChar.ToString())
+                            ? baseFull : baseFull + Path.DirectorySeparatorChar;
+                        if (full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            path = full.Substring(prefix.Length).Replace('\\', '/');
+                        }
+                        else
+                        {
+                            // 文档目录之外的文件复制到同级 assets，保证预览可访问
+                            path = CopyImageToAssets(tab, dlg.FileName);
+                            StatusText.Text = "资源已复制到 " + path;
+                        }
+                    }
+                }
+                else
+                {
+                    StatusText.Text = "文档尚未保存，已使用绝对路径（预览可能无法显示）";
+                }
+                PostToWeb(new { type = "resourcePicked", path });
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("选择控件资源失败", ex);
+                PostToWeb(new { type = "resourcePicked", path = "" });
+                MessageBox.Show("选择资源失败：" + ex.Message, "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

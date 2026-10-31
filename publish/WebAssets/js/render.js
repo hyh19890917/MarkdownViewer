@@ -54,6 +54,7 @@
     var uiPropExtra = document.getElementById("ui-prop-extra");
     var uiPropText = document.getElementById("ui-prop-text");
     var uiPropSrc = document.getElementById("ui-prop-src");
+    var uiPropSrcBrowse = document.getElementById("ui-prop-src-browse");
     var uiPropNote = document.getElementById("ui-prop-note");
     var uiPropX = document.getElementById("ui-prop-x");
     var uiPropY = document.getElementById("ui-prop-y");
@@ -461,6 +462,7 @@
     var uiLogicOn = false;
     var uiConnectMode = false;
     var uiConnectFrom = null;
+    var uiPickingResource = false;
     var uiDrag = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
@@ -4838,6 +4840,16 @@
         uiCreateConnection(el.id, target, targetPage ? "open" : "toggle", "click");
     }
 
+    function uiPickResource() {
+        if (!uiSelectedElement()) {
+            uiEditorHint.textContent = "请先选择一个组件，再浏览资源文件";
+            return;
+        }
+        uiPickingResource = true;
+        uiEditorHint.textContent = "正在打开文件选择器…";
+        postMessage({ type: "pickResource" });
+    }
+
     function uiCreateConnection(fromId, targetId, action, eventName) {
         if (!uiDoc || !fromId || !targetId) return;
         var targetPage = uiFindPage(uiDoc, targetId);
@@ -5191,6 +5203,7 @@
             uiUpdateCanvasLabel(el);
         });
         if (uiPropParent) uiPropParent.addEventListener("change", uiReparentElement);
+        if (uiPropSrcBrowse) uiPropSrcBrowse.addEventListener("click", uiPickResource);
         [uiPropX, uiPropY, uiPropW, uiPropH].forEach(function (input) {
             input.addEventListener("change", uiSyncPropsFromFields);
         });
@@ -6466,6 +6479,18 @@
             openTableEditor(null, data.rows, data.cols);
         } else if (data.type === "uiEditor") {
             openUiEditor(null, null);
+        } else if (data.type === "resourcePicked") {
+            var pickedPath = typeof data.path === "string" ? data.path : "";
+            uiPickingResource = false;
+            var pickedEl = uiSelectedElement();
+            if (pickedEl && pickedPath) {
+                pickedEl.props.src = pickedPath;
+                if (uiPropSrc) uiPropSrc.value = pickedPath;
+                uiUpdateCanvasLabel(pickedEl);
+                uiEditorHint.textContent = "已设置资源路径：" + pickedPath;
+            } else {
+                uiEditorHint.textContent = "已取消选择资源";
+            }
         } else if (data.type === "saved") {
             // 保存成功：以“实际写入磁盘的文本”作为新基线；保存期间新增的编辑仍保持未保存状态
             var sb = buffers[data.tabId];

@@ -253,8 +253,11 @@
                         <input id="ui-prop-text" type="text" maxlength="120"/>
                     </label>
                     <label class="ui-field">资源路径
-                        <input id="ui-prop-src" type="text" maxlength="200"
-                               placeholder="图片 / GIF / 模型的相对或绝对路径"/>
+                        <span class="ui-field-row">
+                            <input id="ui-prop-src" type="text" maxlength="500"
+                                   placeholder="图片 / GIF / 模型 / 数据文件的相对或绝对路径"/>
+                            <button id="ui-prop-src-browse" type="button" title="浏览并选择资源文件">浏览</button>
+                        </span>
                     </label>
                     <label class="ui-field">备注 / 说明
                         <input id="ui-prop-note" type="text" maxlength="160"
