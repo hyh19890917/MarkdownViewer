@@ -2784,6 +2784,243 @@
         return { vertices: vertices, faces: faces };
     }
 
+    /* ---- PLY（ASCII 与 binary little/big endian） ---- */
+    function uiRuntimeParsePly(buffer, text) {
+        var textContent = text != null ? text : new TextDecoder("utf-8").decode(buffer);
+        var headerEnd = textContent.search(/\nend_header\b/);
+        if (headerEnd < 0) return null;
+        var header = textContent.slice(0, headerEnd);
+        var bodyText = textContent.slice(headerEnd + "\nend_header".length + 1);
+        var vertexCount = 0;
+        var faceCount = 0;
+        var binary = null;
+        var littleEndian = true;
+        var vertexProps = [];
+        var faceProps = [];
+        header.split(/\r?\n/).forEach(function (line) {
+            var trimmed = line.trim();
+            if (!trimmed) return;
+            var parts = trimmed.split(/\s+/);
+            if (parts[0] === "format") {
+                binary = parts[1] !== "ascii";
+                littleEndian = parts[1] !== "binary_big_endian";
+            } else if (parts[0] === "element" && parts[1] === "vertex") {
+                vertexCount = parseInt(parts[2], 10) || 0;
+            } else if (parts[0] === "element" && parts[1] === "face") {
+                faceCount = parseInt(parts[2], 10) || 0;
+            } else if (parts[0] === "property" && /^element/.test("x") === false && vertexCount && faceCount === 0 && !vertexProps) {
+                // placeholder, never hit
+            }
+        });
+        // 重新解析 header，按当前 element 累积 property 列表
+        var currentElement = "";
+        header.split(/\r?\n/).forEach(function (line) {
+            var trimmed = line.trim();
+            var parts = trimmed.split(/\s+/);
+            if (parts[0] === "element") currentElement = parts[1];
+            else if (parts[0] === "property" && currentElement === "vertex") {
+                vertexProps.push({ name: parts[2], type: parts[1] });
+            } else if (parts[0] === "property" && currentElement === "face") {
+                if (parts[1] === "list") {
+                    faceProps.push({ name: "indices", type: parts[3], countType: parts[2] });
+                } else {
+                    faceProps.push({ name: parts[2], type: parts[1] });
+                }
+            } else if (parts[0] === "end_header") {
+                return;
+            }
+        });
+
+        var vertices = [];
+        var faces = [];
+        if (!binary) {
+            var lines = bodyText.split(/\r?\n/).filter(function (line) { return line.trim(); });
+            for (var i = 0; i < vertexCount && i < lines.length; i++) {
+                var values = lines[i].trim().split(/\s+/).map(Number);
+                vertices.push([values[0], values[1], values[2]]);
+            }
+            for (var j = 0; j < faceCount && (vertexCount + j) < lines.length; j++) {
+                var f = lines[vertexCount + j].trim().split(/\s+/).map(Number);
+                var n = f[0];
+                var idx = [];
+                for (var k = 0; k < n; k++) idx.push(f[1 + k]);
+                for (var m = 1; m + 1 < idx.length; m++) faces.push([idx[0], idx[m], idx[m + 1]]);
+            }
+        } else {
+            var view = new DataView(buffer);
+            // 找二进制数据起点：header 结束之后紧接着 \r\n 或 \n
+            var headerBytesLen = 0;
+            var bytes = new Uint8Array(buffer);
+            var marker = "end_header";
+            for (var p = 0; p + marker.length <= bytes.length; p++) {
+                var match = true;
+                for (var q = 0; q < marker.length; q++) {
+                    if (bytes[p + q] !== marker.charCodeAt(q)) { match = false; break; }
+                }
+                if (match) {
+                    headerBytesLen = p + marker.length;
+                    while (headerBytesLen < bytes.length && (bytes[headerBytesLen] === 10 || bytes[headerBytesLen] === 13)) headerBytesLen++;
+                    break;
+                }
+            }
+            var offset = headerBytesLen;
+            var readNumber = function (type) {
+                var value;
+                if (type === "float" || type === "float32") {
+                    value = view.getFloat32(offset, littleEndian); offset += 4;
+                } else if (type === "double" || type === "float64") {
+                    value = view.getFloat64(offset, littleEndian); offset += 8;
+                } else if (type === "char" || type === "int8") {
+                    value = view.getInt8(offset); offset += 1;
+                } else if (type === "uchar" || type === "uint8") {
+                    value = view.getUint8(offset); offset += 1;
+                } else if (type === "short" || type === "int16") {
+                    value = view.getInt16(offset, littleEndian); offset += 2;
+                } else if (type === "ushort" || type === "uint16") {
+                    value = view.getUint16(offset, littleEndian); offset += 2;
+                } else if (type === "int" || type === "int32") {
+                    value = view.getInt32(offset, littleEndian); offset += 4;
+                } else {
+                    value = view.getUint32(offset, littleEndian); offset += 4;
+                }
+                return value;
+            };
+            for (var i2 = 0; i2 < vertexCount; i2++) {
+                var v = [0, 0, 0];
+                for (var pv = 0; pv < vertexProps.length; pv++) {
+                    var num = readNumber(vertexProps[pv].type);
+                    var name = vertexProps[pv].name;
+                    if (name === "x") v[0] = num;
+                    else if (name === "y") v[1] = num;
+                    else if (name === "z") v[2] = num;
+                }
+                vertices.push(v);
+            }
+            for (var i3 = 0; i3 < faceCount; i3++) {
+                var count = 0;
+                var indices = [];
+                for (var pf = 0; pf < faceProps.length; pf++) {
+                    var prop = faceProps[pf];
+                    if (prop.name === "indices") {
+                        count = readNumber(prop.countType || "uchar");
+                        for (var k2 = 0; k2 < count; k2++) indices.push(readNumber(prop.type));
+                    } else {
+                        readNumber(prop.type);
+                    }
+                }
+                for (var m2 = 1; m2 + 1 < indices.length; m2++) faces.push([indices[0], indices[m2], indices[m2 + 1]]);
+            }
+        }
+        return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+    }
+
+    /* ---- glTF 二进制（GLB 2.0） ---- */
+    function uiRuntimeParseGlb(buffer) {
+        if (!buffer || buffer.byteLength < 20) return null;
+        var view = new DataView(buffer);
+        if (view.getUint32(0, true) !== 0x46546C67) return null; // 'glTF'
+        if (view.getUint32(4, true) !== 2) return null;
+        var jsonLength = view.getUint32(12, true);
+        var jsonType = view.getUint32(16, true);
+        if (jsonType !== 0x4E4F534A) return null; // 'JSON'
+        var jsonText = new TextDecoder("utf-8").decode(new Uint8Array(buffer, 20, jsonLength));
+        var gltf;
+        try { gltf = JSON.parse(jsonText); } catch (e) { return null; }
+        var binStart = 20 + jsonLength;
+        while (binStart % 4 !== 0) binStart++;
+        var accessors = gltf.accessors || [];
+        var bufferViews = gltf.bufferViews || [];
+        var meshes = gltf.meshes || [];
+        var vertices = [];
+        var faces = [];
+        for (var mi = 0; mi < meshes.length && !vertices.length; mi++) {
+            var prims = meshes[mi].primitives || [];
+            for (var pi = 0; pi < prims.length && !vertices.length; pi++) {
+                var prim = prims[pi];
+                var posAccessorIndex = prim.attributes && prim.attributes.POSITION;
+                if (posAccessorIndex == null) continue;
+                var posAccessor = accessors[posAccessorIndex];
+                if (!posAccessor || posAccessor.componentType !== 5126) continue;
+                var posView = bufferViews[posAccessor.bufferView];
+                if (!posView || posView.buffer !== 0 && posView.buffer !== undefined) {
+                    if (posView && posView.buffer === undefined) posView.buffer = 0;
+                    else if (posView && posView.buffer !== 0) continue;
+                }
+                var posOffset = (posView.byteOffset || 0) + (posAccessor.byteOffset || 0);
+                var posStride = posView.byteStride || 12;
+                var count = posAccessor.count || 0;
+                for (var i = 0; i < count; i++) {
+                    var off = binStart + posOffset + i * posStride;
+                    vertices.push([
+                        view.getFloat32(off, true),
+                        view.getFloat32(off + 4, true),
+                        view.getFloat32(off + 8, true)
+                    ]);
+                }
+                if (prim.indices != null) {
+                    var idxAccessor = accessors[prim.indices];
+                    if (idxAccessor) {
+                        var idxView = bufferViews[idxAccessor.bufferView];
+                        var idxOffset = (idxView.byteOffset || 0) + (idxAccessor.byteOffset || 0);
+                        var idxCount = idxAccessor.count || 0;
+                        var is32 = idxAccessor.componentType === 5125;
+                        for (var f = 0; f + 2 < idxCount; f += 3) {
+                            var a, b, c;
+                            if (is32) {
+                                a = view.getUint32(binStart + idxOffset + f * 4, true);
+                                b = view.getUint32(binStart + idxOffset + (f + 1) * 4, true);
+                                c = view.getUint32(binStart + idxOffset + (f + 2) * 4, true);
+                            } else {
+                                a = view.getUint16(binStart + idxOffset + f * 2, true);
+                                b = view.getUint16(binStart + idxOffset + (f + 1) * 2, true);
+                                c = view.getUint16(binStart + idxOffset + (f + 2) * 2, true);
+                            }
+                            faces.push([a, b, c]);
+                        }
+                    }
+                } else {
+                    for (var s = 0; s + 2 < count; s += 3) faces.push([s, s + 1, s + 2]);
+                }
+            }
+        }
+        return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+    }
+
+    /* ---- STEP（ISO 10303-21）：解析可细分（POLY_LOOP）表示 ---- */
+    function uiRuntimeParseStep(text) {
+        var source = String(text || "");
+        if (source.indexOf("ISO-10303-21") < 0 && !/^\s*STEP\b/i.test(source)) return null;
+        var points = {};
+        var pointOrder = [];
+        var pointRe = /#(\d+)\s*=\s*CARTESIAN_POINT\s*\(\s*'[^']*'\s*,\s*\(\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*,\s*([-+\d.eE]+)\s*\)\s*\)/g;
+        var m;
+        while ((m = pointRe.exec(source))) {
+            if (!points[m[1]]) {
+                points[m[1]] = pointOrder.length;
+                pointOrder.push([Number(m[2]), Number(m[3]), Number(m[4])]);
+            }
+        }
+        if (!pointOrder.length) return null;
+        var faces = [];
+        var loopRe = /#(\d+)\s*=\s*POLY_LOOP\s*\(\s*'[^']*'\s*,\s*\(([^)]*)\)\s*\)/g;
+        while ((m = loopRe.exec(source))) {
+            var ids = m[2].match(/#\d+/g) || [];
+            var indices = [];
+            for (var i = 0; i < ids.length; i++) {
+                var pid = ids[i].substring(1);
+                if (points[pid] != null) indices.push(points[pid]);
+            }
+            if (indices.length >= 3) {
+                if (indices[0] === indices[indices.length - 1]) indices.pop();
+                for (var j = 1; j + 1 < indices.length; j++) {
+                    faces.push([indices[0], indices[j], indices[j + 1]]);
+                }
+            }
+        }
+        if (!faces.length) return null; // 大概率是 NURBS/B-rep，无法用线框表达
+        return { vertices: pointOrder, faces: faces };
+    }
+
     function uiRuntimeNormalizeModel(model) {
         if (!model || !model.vertices.length) return null;
         var minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -2902,22 +3139,54 @@
         function load() {
             var source = uiResolveAsset(props.src);
             if (!source) {
-                status.textContent = "未配置模型文件（资源路径支持 .obj / .stl）";
+                status.textContent = "未配置模型文件（支持 .obj / .stl / .ply / .glb / .gltf / .step / .stp）";
                 return;
             }
             fetch(source).then(function (response) {
                 if (!response.ok) throw new Error("HTTP " + response.status);
                 return response.arrayBuffer();
             }).then(function (buffer) {
-                var model = uiRuntimeParseStlBinary(buffer);
-                if (!model) {
-                    var textContent = new TextDecoder("utf-8").decode(buffer);
-                    if (/^\s*v\s+/m.test(textContent)) model = uiRuntimeParseObj(textContent);
-                    if (!model) model = uiRuntimeParseStlAscii(textContent);
+                var lower = source.replace(/[?#].*$/, "").toLowerCase();
+                var textContent = null;
+                var model = null;
+                var text = function () {
+                    if (textContent == null) textContent = new TextDecoder("utf-8").decode(buffer);
+                    return textContent;
+                };
+
+                if (/\.ply$/.test(lower)) {
+                    model = uiRuntimeParsePly(buffer, text());
+                } else if (/\.glb$/.test(lower)) {
+                    model = uiRuntimeParseGlb(buffer);
+                } else if (/\.gltf$/.test(lower)) {
+                    model = uiRuntimeParseGlb(buffer);
+                    if (!model) {
+                        status.textContent = "该 .gltf 暂不支持，请使用 .glb（或内嵌缓冲的 GLB）";
+                        return;
+                    }
+                } else if (/\.(step|stp)$/.test(lower)) {
+                    model = uiRuntimeParseStep(text());
+                } else if (/\.obj$/.test(lower)) {
+                    model = uiRuntimeParseObj(text());
+                } else if (/\.stl$/.test(lower)) {
+                    model = uiRuntimeParseStlBinary(buffer) || uiRuntimeParseStlAscii(text());
+                } else if (/\.(prt|ptr|iges|igs|x_t|x_b|3mf)$/.test(lower)) {
+                    status.textContent = "暂不支持该格式（.prt / .iges / .3mf 等）";
+                    return;
+                } else {
+                    model = uiRuntimeParseStlBinary(buffer);
+                    if (!model) {
+                        var t = text();
+                        if (/^\s*ply\b/i.test(t)) model = uiRuntimeParsePly(buffer, t);
+                        else if (t.indexOf("ISO-10303-21") >= 0) model = uiRuntimeParseStep(t);
+                        else if (/^\s*v\s+/m.test(t)) model = uiRuntimeParseObj(t);
+                        if (!model) model = uiRuntimeParseStlAscii(t);
+                    }
                 }
+
                 state.model = uiRuntimeNormalizeModel(model);
                 if (!state.model) {
-                    status.textContent = "模型解析失败，仅显示占位立方体";
+                    status.textContent = "模型解析失败或为 NURBS/压缩格式，仅显示占位立方体";
                     return;
                 }
                 render();
