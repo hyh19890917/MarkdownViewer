@@ -2255,6 +2255,16 @@ namespace MarkdownViewer
             PostToWeb(new { type = "mermaidEditor" });
         }
 
+        private void InsertUiLayout_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab == null)
+            {
+                StatusText.Text = "请先打开或新建一个文档";
+                return;
+            }
+            PostToWeb(new { type = "uiEditor" });
+        }
+
         private void InsertCodeBlock_Click(object sender, RoutedEventArgs e) =>
             InsertMarkdown("```text\n\n```\n");
 

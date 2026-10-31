@@ -39,6 +39,26 @@
     var tableGrid = document.getElementById("table-editor-grid");
     var mermaidEditorBox = mermaidEditor ? mermaidEditor.querySelector(".mermaid-editor-box") : null;
     var tableEditorBox = tableEditor ? tableEditor.querySelector(".mermaid-editor-box") : null;
+    var uiEditor = document.getElementById("ui-editor");
+    var uiEditorBox = uiEditor ? uiEditor.querySelector(".mermaid-editor-box") : null;
+    var uiEditorTitle = document.getElementById("ui-editor-title");
+    var uiEditorSize = document.getElementById("ui-editor-size");
+    var uiEditorHint = document.getElementById("ui-editor-hint");
+    var uiCanvas = document.getElementById("ui-canvas");
+    var uiCanvasWrap = document.getElementById("ui-canvas-wrap");
+    var uiPalette = document.getElementById("ui-palette");
+    var uiPropsEmpty = document.getElementById("ui-props-empty");
+    var uiPropsFields = document.getElementById("ui-props-fields");
+    var uiPropType = document.getElementById("ui-prop-type");
+    var uiPropText = document.getElementById("ui-prop-text");
+    var uiPropSrc = document.getElementById("ui-prop-src");
+    var uiPropNote = document.getElementById("ui-prop-note");
+    var uiPropX = document.getElementById("ui-prop-x");
+    var uiPropY = document.getElementById("ui-prop-y");
+    var uiPropW = document.getElementById("ui-prop-w");
+    var uiPropH = document.getElementById("ui-prop-h");
+    var uiCanvasWidth = document.getElementById("ui-canvas-width");
+    var uiCanvasHeight = document.getElementById("ui-canvas-height");
 
     /* ===================== 轻量语法高亮（离线，无外部依赖） ===================== */
     var codeSnippets = [];
@@ -410,6 +430,11 @@
     var tableFocus = { r: 1, c: 0 };
     var dialogRects = Object.create(null);
     var dialogClickSuppressUntil = 0;
+    var uiEditIndex = null;
+    var uiLayout = null;
+    var uiSelectedId = null;
+    var uiElementSeq = 0;
+    var uiDrag = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -2025,6 +2050,294 @@
         });
     }
 
+    /* ===================== UI 布局设计器 ===================== */
+    var UI_TYPE_LABELS = {
+        page: "页面", navbar: "导航栏", sidebar: "侧边栏", content: "内容区",
+        card: "卡片", button: "按钮", input: "输入框", form: "表单",
+        heading: "标题", text: "文本", image: "图片", avatar: "头像",
+        table: "表格", list: "列表", model3d: "3D 模型", scene3d: "3D 空间",
+        filebrowser: "文件浏览器", database: "数据库", animation: "动画",
+        canvas: "Canvas", gif: "GIF"
+    };
+
+    var UI_DEFAULT_SIZE = {
+        page: [960, 600], navbar: [960, 56], sidebar: [220, 544],
+        content: [740, 544], card: [260, 160], button: [120, 40],
+        input: [220, 40], form: [280, 190], heading: [260, 40],
+        text: [260, 60], image: [240, 160], avatar: [72, 72],
+        table: [360, 180], list: [240, 140], model3d: [240, 180],
+        scene3d: [320, 200], filebrowser: [300, 200], database: [240, 160],
+        animation: [260, 160], canvas: [280, 180], gif: [240, 160]
+    };
+
+    function uiClamp(value, min, max, fallback) {
+        var n = Number(value);
+        if (!isFinite(n)) n = fallback;
+        return Math.max(min, Math.min(max, n));
+    }
+
+    function uiMaxElementSeq(elements) {
+        var max = 0;
+        (elements || []).forEach(function (el) {
+            var m = /^e(\d+)$/.exec(String(el.id || ""));
+            if (m) max = Math.max(max, parseInt(m[1], 10));
+        });
+        return max;
+    }
+
+    function normalizeUiLayout(raw) {
+        if (!raw || typeof raw !== "object") return null;
+        var width = Math.round(uiClamp(raw.width, 320, 1920, 960));
+        var height = Math.round(uiClamp(raw.height, 240, 1200, 600));
+        var elements = [];
+        var usedIds = Object.create(null);
+        var sourceElements = Array.isArray(raw.elements) ? raw.elements : [];
+        sourceElements.forEach(function (item, index) {
+            if (!item || typeof item !== "object" || !UI_TYPE_LABELS[item.type]) return;
+            var w = Math.round(uiClamp(item.w, 24, width, 200));
+            var h = Math.round(uiClamp(item.h, 18, height, 80));
+            var x = Math.round(uiClamp(item.x, 0, Math.max(0, width - w), 24));
+            var y = Math.round(uiClamp(item.y, 0, Math.max(0, height - h), 24));
+            w = Math.min(w, width);
+            h = Math.min(h, height);
+            x = Math.min(x, width - w);
+            y = Math.min(y, height - h);
+            var id = String(item.id || "").trim();
+            if (!id || usedIds[id]) id = "e" + (index + 1);
+            while (usedIds[id]) id = "e" + (++index + 1);
+            usedIds[id] = true;
+            var props = item.props && typeof item.props === "object" ? item.props : {};
+            var el = {
+                id: id,
+                type: item.type,
+                x: x, y: y, w: w, h: h,
+                text: String(item.text == null ? "" : item.text),
+                props: {
+                    src: String(props.src == null ? "" : props.src),
+                    note: String(props.note == null ? "" : props.note)
+                }
+            };
+            elements.push(el);
+        });
+        return { width: width, height: height, elements: elements };
+    }
+
+    function parseUiLayout(source) {
+        try {
+            return normalizeUiLayout(JSON.parse(String(source || "")));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /* 扫描 cm 中指定语言的围栏代码块（支持 ``` 与 ~~~） */
+    function findFencedBlocks(language) {
+        var lines = cm.getValue().split(/\r?\n/);
+        var blocks = [];
+        var open = null;
+        for (var i = 0; i < lines.length; i++) {
+            var m = /^\s{0,3}(`{3,}|~{3,})\s*([^\s`]*)/.exec(lines[i]);
+            if (!open) {
+                if (m && m[2].toLowerCase() === language) {
+                    open = { start: i, char: m[1].charAt(0), len: m[1].length };
+                }
+                continue;
+            }
+            if (m && m[1].charAt(0) === open.char && m[1].length >= open.len) {
+                blocks.push({ start: open.start, end: i });
+                open = null;
+            }
+        }
+        return blocks;
+    }
+
+    function replaceFencedBlock(language, index, body) {
+        var blocks = findFencedBlocks(language);
+        if (!blocks[index]) return false;
+        var lines = cm.getValue().split(/\r?\n/);
+        var block = blocks[index];
+        var text = "```" + language + "\n" + body + "\n```";
+        cm.replaceRange(text,
+            { line: block.start, ch: 0 },
+            { line: block.end, ch: lines[block.end].length });
+        return true;
+    }
+
+    function uiResolveAsset(src) {
+        var text = String(src || "").trim();
+        if (!text) return "";
+        var absolute = /^[a-zA-Z]:[\\/]/.test(text) || text.indexOf("\\\\") === 0;
+        if (!absolute && !/^[a-z][a-z0-9+.-]*:/i.test(text) && text.indexOf("//") !== 0) {
+            var rel = text.replace(/^\.\//, "").replace(/\\/g, "/");
+            if (rel.charAt(0) === "/") rel = rel.replace(/^\/+/, "");
+            return "https://mdfile.local/" + encodeRelativePath(rel);
+        }
+        return text;
+    }
+
+    function uiPreviewHtml(el) {
+        var label = escapeHtml(el.text || UI_TYPE_LABELS[el.type] || el.type);
+        var note = el.props && el.props.note
+            ? '<div class="ui-el-note">' + escapeHtml(el.props.note) + "</div>" : "";
+        var src = uiResolveAsset(el.props && el.props.src);
+        switch (el.type) {
+            case "page":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-preview-lines"><i></i><i></i><i></i></div>';
+            case "navbar":
+                return "<span>" + label + '</span><span class="ui-nav-links">首页 · 产品 · 文档</span>';
+            case "sidebar":
+                return '<div class="ui-side-title">' + label +
+                    '</div><div class="ui-side-lines"><i></i><i></i><i></i><i></i></div>' + note;
+            case "content":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-preview-lines"><i></i><i></i><i></i></div>' + note;
+            case "card":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-preview-lines"><i></i><i></i></div>' + note;
+            case "button":
+                return label;
+            case "input":
+                return "<span>" + label + "</span>";
+            case "form":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-form-line"></div><div class="ui-form-line"></div>' +
+                    '<div class="ui-form-line short"></div><div class="ui-form-button">提交</div>';
+            case "heading":
+                return label;
+            case "text":
+                return "<div>" + label + '</div><div class="ui-preview-lines"><i></i><i></i></div>' + note;
+            case "image":
+                return src
+                    ? '<img class="ui-el-img" src="' + escapeHtml(src) + '" alt="">'
+                    : '<div class="ui-image-ph">' + label + "</div>" + note;
+            case "gif":
+                return (src
+                    ? '<img class="ui-el-img" src="' + escapeHtml(src) + '" alt="">'
+                    : '<div class="ui-gif-ph">GIF</div>') +
+                    '<span class="ui-gif-badge">GIF</span>' + note;
+            case "avatar":
+                return '<div class="ui-el-centered">' + label + "</div>";
+            case "table":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-table-preview">' +
+                    "<i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>";
+            case "list":
+                return '<div class="ui-preview-title">' + label +
+                    '</div><div class="ui-list-preview"><i></i><i></i><i></i></div>';
+            case "model3d":
+                return '<div class="ui-cube"></div><div class="ui-el-centered">' + label + "</div>" + note;
+            case "scene3d":
+                return '<div class="ui-scene-grid"></div><div class="ui-cube"></div>' +
+                    '<div class="ui-el-centered">' + label + "</div>" + note;
+            case "filebrowser":
+                return '<div class="ui-filebar"></div><div class="ui-filelist">' +
+                    "<i></i><i></i><i></i><i></i></div>" +
+                    '<div class="ui-el-note">' + label + "</div>" + note;
+            case "database":
+                return '<div class="ui-preview-title">' + label + '</div><div class="ui-db"></div>' + note;
+            case "animation":
+                return '<div class="ui-play"></div><div class="ui-timeline"></div>' +
+                    '<div class="ui-el-note">' + label + "</div>" + note;
+            case "canvas":
+                return '<div class="ui-checker"></div><div class="ui-el-centered">' + label + "</div>" + note;
+            default:
+                return label;
+        }
+    }
+
+    function uiElementPercentStyle(el, width, height) {
+        return "left:" + (el.x / width * 100).toFixed(4) + "%;" +
+            "top:" + (el.y / height * 100).toFixed(4) + "%;" +
+            "width:" + (el.w / width * 100).toFixed(4) + "%;" +
+            "height:" + (el.h / height * 100).toFixed(4) + "%;";
+    }
+
+    function buildUiWireframe(layout) {
+        var box = document.createElement("div");
+        box.className = "ui-wireframe";
+        box.style.aspectRatio = layout.width + " / " + layout.height;
+        layout.elements.forEach(function (el) {
+            var node = document.createElement("div");
+            node.className = "ui-el ui-el-" + el.type;
+            node.setAttribute("style", uiElementPercentStyle(el, layout.width, layout.height));
+            node.innerHTML = uiPreviewHtml(el);
+            box.appendChild(node);
+        });
+        return box;
+    }
+
+    function renderUiBlocks() {
+        var root = document.getElementById("md-body");
+        var codes = root.querySelectorAll("pre > code.language-ui");
+        var index = 0;
+        for (var i = 0; i < codes.length; i++) {
+            var code = codes[i];
+            var pre = code.parentNode;
+            if (!pre || pre.tagName !== "PRE") continue;
+            var source = code.textContent || "";
+            var layout = parseUiLayout(source);
+            var block = document.createElement("div");
+            block.className = "ui-block";
+            block.setAttribute("data-ui-index", String(index));
+            var head = document.createElement("div");
+            head.className = "ui-block-head";
+            var title = document.createElement("span");
+            title.textContent = layout
+                ? "UI 布局 · " + layout.width + " × " + layout.height
+                : "UI 布局 · JSON 错误";
+            head.appendChild(title);
+            if (layout) {
+                block.setAttribute("data-ui-src", source);
+                var btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "ui-edit-btn";
+                btn.textContent = "编辑";
+                btn.title = "打开 UI 布局设计器";
+                btn.addEventListener("click", (function (idx, src) {
+                    return function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openUiEditor(idx, src);
+                    };
+                })(index, source));
+                head.appendChild(btn);
+                block.appendChild(head);
+                block.appendChild(buildUiWireframe(layout));
+            } else {
+                block.appendChild(head);
+                var err = document.createElement("div");
+                err.className = "ui-error";
+                err.textContent = "UI 布局 JSON 解析失败，请在编辑器中修正该代码块。";
+                block.appendChild(err);
+            }
+            pre.parentNode.replaceChild(block, pre);
+            index++;
+        }
+    }
+
+    function uiLayoutJson() {
+        var out = {
+            width: uiLayout.width,
+            height: uiLayout.height,
+            elements: uiLayout.elements.map(function (el) {
+                var item = {
+                    id: el.id, type: el.type,
+                    x: Math.round(el.x), y: Math.round(el.y),
+                    w: Math.round(el.w), h: Math.round(el.h),
+                    text: el.text || ""
+                };
+                if ((el.props && el.props.src) || (el.props && el.props.note)) {
+                    item.props = {};
+                    if (el.props.src) item.props.src = el.props.src;
+                    if (el.props.note) item.props.note = el.props.note;
+                }
+                return item;
+            })
+        };
+        return JSON.stringify(out, null, 2);
+    }
+
     /* ===================== 弹窗拖动 / 缩放 ===================== */
     function dialogMinSize(box) {
         return {
@@ -2223,10 +2536,441 @@
 
     setupFloatingDialog(mermaidEditor, mermaidEditorBox, "mermaid", 640, 420);
     setupFloatingDialog(tableEditor, tableEditorBox, "table", 520, 320);
+    setupFloatingDialog(uiEditor, uiEditorBox, "ui", 900, 560);
+
+    /* ===================== UI 布局编辑器逻辑 ===================== */
+    function uiSelectedElement() {
+        if (!uiLayout || !uiSelectedId) return null;
+        for (var i = 0; i < uiLayout.elements.length; i++) {
+            if (uiLayout.elements[i].id === uiSelectedId) return uiLayout.elements[i];
+        }
+        return null;
+    }
+
+    function uiCanvasNode(id) {
+        return id ? uiCanvas.querySelector('.ui-canvas-el[data-id="' + id + '"]') : null;
+    }
+
+    function uiDefaultPosition(type, w, h) {
+        var W = uiLayout.width;
+        var H = uiLayout.height;
+        if (type === "page") return [0, 0];
+        if (type === "navbar") return [0, 0];
+        if (type === "sidebar") return [0, Math.min(56, H - h)];
+        if (type === "content") return [Math.min(220, W - w), Math.min(56, H - h)];
+        var n = uiLayout.elements.length % 8;
+        return [
+            Math.max(0, Math.min(W - w, 24 + n * 20)),
+            Math.max(0, Math.min(H - h, 24 + n * 20))
+        ];
+    }
+
+    function buildUiCanvasElement(el) {
+        var node = document.createElement("div");
+        node.className = "ui-canvas-el" + (el.id === uiSelectedId ? " selected" : "");
+        node.setAttribute("data-id", el.id);
+        node.setAttribute("data-type", el.type);
+        node.style.left = el.x + "px";
+        node.style.top = el.y + "px";
+        node.style.width = el.w + "px";
+        node.style.height = el.h + "px";
+        node.title = UI_TYPE_LABELS[el.type] + "：" + (el.text || "（未填写文字）");
+        var label = document.createElement("div");
+        label.className = "ui-canvas-label";
+        label.textContent = el.text || UI_TYPE_LABELS[el.type];
+        node.appendChild(label);
+        if (el.props && el.props.note) {
+            var note = document.createElement("div");
+            note.className = "ui-canvas-note";
+            note.textContent = el.props.note;
+            node.appendChild(note);
+        }
+        ["nw", "ne", "sw", "se"].forEach(function (dir) {
+            var handle = document.createElement("span");
+            handle.className = "ui-canvas-resize ui-resize-" + dir;
+            handle.setAttribute("data-dir", dir);
+            node.appendChild(handle);
+        });
+        return node;
+    }
+
+    function uiSyncPropInputs() {
+        var el = uiSelectedElement();
+        if (!el) return;
+        uiPropText.value = el.text || "";
+        uiPropSrc.value = (el.props && el.props.src) || "";
+        uiPropNote.value = (el.props && el.props.note) || "";
+        uiPropX.value = Math.round(el.x);
+        uiPropY.value = Math.round(el.y);
+        uiPropW.value = Math.round(el.w);
+        uiPropH.value = Math.round(el.h);
+    }
+
+    function uiRenderProps() {
+        var el = uiSelectedElement();
+        if (!el) {
+            uiPropsEmpty.hidden = false;
+            uiPropsFields.hidden = true;
+            uiPropType.textContent = "";
+            return;
+        }
+        uiPropsEmpty.hidden = true;
+        uiPropsFields.hidden = false;
+        uiPropType.textContent = UI_TYPE_LABELS[el.type];
+        uiSyncPropInputs();
+    }
+
+    function uiSelectElement(id) {
+        uiSelectedId = id || null;
+        var nodes = uiCanvas.querySelectorAll(".ui-canvas-el");
+        for (var i = 0; i < nodes.length; i++) {
+            nodes[i].classList.toggle("selected", nodes[i].getAttribute("data-id") === uiSelectedId);
+        }
+        uiRenderProps();
+    }
+
+    function uiUpdateCanvasLabel(el) {
+        var node = uiCanvasNode(el.id);
+        if (!node) return;
+        var label = node.querySelector(".ui-canvas-label");
+        if (label) label.textContent = el.text || UI_TYPE_LABELS[el.type];
+        var note = node.querySelector(".ui-canvas-note");
+        if (el.props && el.props.note) {
+            if (!note) {
+                note = document.createElement("div");
+                note.className = "ui-canvas-note";
+                node.appendChild(note);
+            }
+            note.textContent = el.props.note;
+        } else if (note) {
+            note.parentNode.removeChild(note);
+        }
+        node.title = UI_TYPE_LABELS[el.type] + "：" + (el.text || "（未填写文字）");
+    }
+
+    function uiApplyElementGeometry(el, x, y, w, h) {
+        w = Math.max(24, Math.min(uiLayout.width, Math.round(w)));
+        h = Math.max(18, Math.min(uiLayout.height, Math.round(h)));
+        x = Math.max(0, Math.min(uiLayout.width - w, Math.round(x)));
+        y = Math.max(0, Math.min(uiLayout.height - h, Math.round(y)));
+        el.x = x;
+        el.y = y;
+        el.w = w;
+        el.h = h;
+        var node = uiCanvasNode(el.id);
+        if (node) {
+            node.style.left = x + "px";
+            node.style.top = y + "px";
+            node.style.width = w + "px";
+            node.style.height = h + "px";
+        }
+        if (el.id === uiSelectedId) uiSyncPropInputs();
+    }
+
+    function uiStartElementPointer(el, e, dir) {
+        if (!el || !uiLayout) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var start = { x: el.x, y: el.y, w: el.w, h: el.h };
+        var startX = e.clientX;
+        var startY = e.clientY;
+        var oldCursor = document.body.style.cursor;
+        document.body.classList.add("dialog-dragging");
+        document.body.style.cursor = dir ? ({
+            nw: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", se: "nwse-resize"
+        }[dir] || "move") : "move";
+
+        function onMove(ev) {
+            var dx = Math.round((ev.clientX - startX) / 5) * 5;
+            var dy = Math.round((ev.clientY - startY) / 5) * 5;
+            if (!dir) {
+                uiApplyElementGeometry(el, start.x + dx, start.y + dy, start.w, start.h);
+                return;
+            }
+            var x = start.x;
+            var y = start.y;
+            var w = start.w;
+            var h = start.h;
+            if (dir.indexOf("e") >= 0) w = start.w + dx;
+            if (dir.indexOf("s") >= 0) h = start.h + dy;
+            if (dir.indexOf("w") >= 0) {
+                x = start.x + dx;
+                w = start.w - dx;
+                if (w < 24) {
+                    x = start.x + start.w - 24;
+                    w = 24;
+                }
+            }
+            if (dir.indexOf("n") >= 0) {
+                y = start.y + dy;
+                h = start.h - dy;
+                if (h < 18) {
+                    y = start.y + start.h - 18;
+                    h = 18;
+                }
+            }
+            if (w < 24) w = 24;
+            if (h < 18) h = 18;
+            uiApplyElementGeometry(el, x, y, w, h);
+        }
+
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.removeEventListener("pointercancel", onUp);
+            document.body.classList.remove("dialog-dragging");
+            document.body.style.cursor = oldCursor;
+            uiSyncPropInputs();
+        }
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+    }
+
+    function uiRenderEditor() {
+        if (!uiCanvas || !uiLayout) return;
+        uiCanvas.style.width = uiLayout.width + "px";
+        uiCanvas.style.height = uiLayout.height + "px";
+        uiCanvas.innerHTML = "";
+        uiLayout.elements.forEach(function (el) {
+            uiCanvas.appendChild(buildUiCanvasElement(el));
+        });
+        uiEditorSize.textContent = uiLayout.width + " × " + uiLayout.height;
+        uiCanvasWidth.value = uiLayout.width;
+        uiCanvasHeight.value = uiLayout.height;
+        if (uiSelectedId && !uiSelectedElement()) uiSelectedId = null;
+        uiRenderProps();
+    }
+
+    function addUiElement(type) {
+        if (!uiLayout || !UI_TYPE_LABELS[type]) return;
+        var size = UI_DEFAULT_SIZE[type] || [200, 100];
+        var w = Math.min(size[0], uiLayout.width);
+        var h = Math.min(size[1], uiLayout.height);
+        var pos = uiDefaultPosition(type, w, h);
+        var el = {
+            id: "e" + (++uiElementSeq),
+            type: type,
+            x: pos[0], y: pos[1], w: w, h: h,
+            text: "",
+            props: { src: "", note: "" }
+        };
+        if (type === "page") {
+            uiLayout.elements.unshift(el);
+        } else {
+            uiLayout.elements.push(el);
+        }
+        uiSelectedId = el.id;
+        uiRenderEditor();
+        uiEditorHint.textContent = "已添加 " + UI_TYPE_LABELS[type] + "；可在右侧修改文字、资源与尺寸";
+        var node = uiCanvasNode(el.id);
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+
+    function deleteUiSelected() {
+        if (!uiLayout || !uiSelectedId) return;
+        uiLayout.elements = uiLayout.elements.filter(function (el) { return el.id !== uiSelectedId; });
+        uiSelectedId = null;
+        uiRenderEditor();
+    }
+
+    function applyUiCanvasSize() {
+        if (!uiLayout) return;
+        var w = Math.round(uiClamp(uiCanvasWidth.value, 320, 1920, uiLayout.width));
+        var h = Math.round(uiClamp(uiCanvasHeight.value, 240, 1200, uiLayout.height));
+        uiLayout.width = w;
+        uiLayout.height = h;
+        uiLayout.elements.forEach(function (el) {
+            el.w = Math.min(el.w, w);
+            el.h = Math.min(el.h, h);
+            el.x = Math.min(el.x, w - el.w);
+            el.y = Math.min(el.y, h - el.h);
+        });
+        uiRenderEditor();
+        uiEditorHint.textContent = "画布尺寸已调整为 " + w + " × " + h;
+    }
+
+    function uiSyncPropsFromFields() {
+        var el = uiSelectedElement();
+        if (!el) return;
+        el.text = uiPropText.value;
+        el.props.src = uiPropSrc.value;
+        el.props.note = uiPropNote.value;
+        var x = parseFloat(uiPropX.value);
+        var y = parseFloat(uiPropY.value);
+        var w = parseFloat(uiPropW.value);
+        var h = parseFloat(uiPropH.value);
+        if (isFinite(x) && isFinite(y) && isFinite(w) && isFinite(h)) {
+            uiApplyElementGeometry(el, x, y, w, h);
+        }
+        uiUpdateCanvasLabel(el);
+    }
+
+    function openUiEditor(index, source) {
+        if (!uiEditor) return;
+        var parsed = (index === null || index === undefined || index === "") ? null : parseInt(index, 10);
+        if (parsed !== null && isNaN(parsed)) parsed = null;
+        uiEditIndex = parsed;
+        uiSelectedId = null;
+
+        if (uiEditIndex === null) {
+            uiLayout = { width: 960, height: 600, elements: [] };
+            uiElementSeq = 0;
+            uiEditorTitle.textContent = "插入 UI 布局";
+            uiEditorHint.textContent = "从左侧添加组件；Ctrl+Enter 应用 · Esc 取消";
+        } else {
+            var layout = parseUiLayout(source || "");
+            if (!layout) {
+                postMessage({ type: "status", text: "UI 布局 JSON 解析失败，请先修正代码块" });
+                return;
+            }
+            uiLayout = layout;
+            uiElementSeq = uiMaxElementSeq(layout.elements);
+            uiEditorTitle.textContent = "编辑 UI 布局";
+            uiEditorHint.textContent = "拖动组件移动，拖动角点缩放；Ctrl+Enter 应用 · Esc 取消";
+        }
+
+        uiEditor.hidden = false;
+        uiRenderEditor();
+        layoutFloatingDialog(uiEditor, uiEditorBox);
+        uiCanvasWrap.scrollLeft = 0;
+        uiCanvasWrap.scrollTop = 0;
+        setTimeout(function () { uiCanvas.focus(); }, 30);
+    }
+
+    function closeUiEditor() {
+        if (!uiEditor) return;
+        uiEditor.hidden = true;
+        uiLayout = null;
+        uiSelectedId = null;
+        uiEditIndex = null;
+        if (viewMode !== "preview") cm.focus();
+    }
+
+    function applyUiEditor() {
+        if (!uiEditor || uiEditor.hidden || !uiLayout) return;
+        uiSyncPropsFromFields();
+        var json = uiLayoutJson();
+        if (uiEditIndex === null) {
+            insertMarkdownBlockAtCursor("```ui\n" + json + "\n```");
+        } else if (!replaceFencedBlock("ui", uiEditIndex, json)) {
+            uiEditorHint.textContent = "未找到对应的 UI 代码块，可能已被外部修改";
+            postMessage({ type: "status", text: "未找到对应的 UI 代码块，可能已被外部修改" });
+            return;
+        }
+        closeUiEditor();
+    }
+
+    if (uiEditor) {
+        document.getElementById("ui-editor-close").addEventListener("click", closeUiEditor);
+        document.getElementById("ui-editor-cancel").addEventListener("click", closeUiEditor);
+        document.getElementById("ui-editor-apply").addEventListener("click", applyUiEditor);
+        document.getElementById("ui-canvas-size-apply").addEventListener("click", applyUiCanvasSize);
+        document.getElementById("ui-delete-el").addEventListener("click", deleteUiSelected);
+
+        uiPalette.addEventListener("click", function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest("button[data-type]") : null;
+            if (btn) addUiElement(btn.getAttribute("data-type"));
+        });
+
+        uiCanvas.addEventListener("pointerdown", function (e) {
+            var node = e.target && e.target.closest ? e.target.closest(".ui-canvas-el") : null;
+            if (!node) {
+                uiSelectElement(null);
+                return;
+            }
+            var el = null;
+            for (var i = 0; i < uiLayout.elements.length; i++) {
+                if (uiLayout.elements[i].id === node.getAttribute("data-id")) {
+                    el = uiLayout.elements[i];
+                    break;
+                }
+            }
+            if (!el) return;
+            uiSelectElement(el.id);
+            uiCanvas.focus();
+            var handle = e.target.closest ? e.target.closest(".ui-canvas-resize") : null;
+            uiStartElementPointer(el, e, handle ? handle.getAttribute("data-dir") : null);
+        });
+
+        uiPropText.addEventListener("input", function () {
+            var el = uiSelectedElement();
+            if (!el) return;
+            el.text = uiPropText.value;
+            uiUpdateCanvasLabel(el);
+        });
+        uiPropSrc.addEventListener("input", function () {
+            var el = uiSelectedElement();
+            if (el) el.props.src = uiPropSrc.value;
+        });
+        uiPropNote.addEventListener("input", function () {
+            var el = uiSelectedElement();
+            if (!el) return;
+            el.props.note = uiPropNote.value;
+            uiUpdateCanvasLabel(el);
+        });
+        [uiPropX, uiPropY, uiPropW, uiPropH].forEach(function (input) {
+            input.addEventListener("change", uiSyncPropsFromFields);
+        });
+
+        uiCanvasWidth.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") { e.preventDefault(); applyUiCanvasSize(); }
+        });
+        uiCanvasHeight.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") { e.preventDefault(); applyUiCanvasSize(); }
+        });
+
+        uiEditor.addEventListener("keydown", function (e) {
+            var editable = e.target && (e.target.tagName === "INPUT" ||
+                e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" ||
+                e.target.isContentEditable);
+            var onControl = e.target && e.target.closest &&
+                e.target.closest("button, a, select");
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeUiEditor();
+            } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                applyUiEditor();
+            } else if (!editable && !onControl && (e.key === "Delete" || e.key === "Backspace")) {
+                if (uiSelectedId) {
+                    e.preventDefault();
+                    deleteUiSelected();
+                }
+            } else if (!editable && !onControl && /^Arrow(Left|Right|Up|Down)$/.test(e.key) && uiSelectedId) {
+                e.preventDefault();
+                var el = uiSelectedElement();
+                if (!el) return;
+                var step = e.shiftKey ? 10 : 1;
+                if (e.key === "ArrowLeft") el.x -= step;
+                if (e.key === "ArrowRight") el.x += step;
+                if (e.key === "ArrowUp") el.y -= step;
+                if (e.key === "ArrowDown") el.y += step;
+                uiApplyElementGeometry(el, el.x, el.y, el.w, el.h);
+            }
+        });
+
+        uiEditor.addEventListener("click", function (e) {
+            if (Date.now() < dialogClickSuppressUntil) return;
+            if (e.target === uiEditor) closeUiEditor();
+        });
+    }
 
     /* 双击图表直接打开源码编辑器 */
     document.getElementById("md-body").addEventListener("dblclick", function (e) {
         if (e.target && e.target.closest && e.target.closest(".mermaid-edit-btn")) return;
+        var uiBlock = e.target && e.target.closest ? e.target.closest(".ui-block") : null;
+        if (uiBlock && !(e.target.closest && e.target.closest(".ui-edit-btn"))) {
+            var uiSource = uiBlock.getAttribute("data-ui-src");
+            if (uiSource != null) {
+                e.preventDefault();
+                openUiEditor(parseInt(uiBlock.getAttribute("data-ui-index"), 10), uiSource);
+                return;
+            }
+        }
         var tableWrap = e.target && e.target.closest ? e.target.closest(".table-wrap") : null;
         if (tableWrap && !(e.target.closest && e.target.closest(".table-edit-btn"))) {
             e.preventDefault();
@@ -2275,6 +3019,7 @@
 
         var html = md.renderer.render(tokens, md.options, {});
         document.getElementById("md-body").innerHTML = html;
+        renderUiBlocks();
         decorateTableNodes();
 
         // 公式静态渲染；Mermaid 图异步渲染（避免每次输入都同步阻塞）
@@ -2409,7 +3154,8 @@
         ]).then(function (parts) {
             var body = document.getElementById("md-body").cloneNode(true);
             body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
-            body.querySelectorAll(".mermaid-edit-btn, .table-edit-btn").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".mermaid-edit-btn, .table-edit-btn, .ui-edit-btn").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".ui-block-head").forEach(function (h) { h.remove(); });
             body.querySelectorAll(".table-wrap").forEach(function (wrap) {
                 while (wrap.firstChild) wrap.parentNode.insertBefore(wrap.firstChild, wrap);
                 wrap.parentNode.removeChild(wrap);
@@ -3363,6 +4109,8 @@
             openMermaidEditor(null, data.source || null);
         } else if (data.type === "tableEditor") {
             openTableEditor(null, data.rows, data.cols);
+        } else if (data.type === "uiEditor") {
+            openUiEditor(null, null);
         } else if (data.type === "saved") {
             // 保存成功：以“实际写入磁盘的文本”作为新基线；保存期间新增的编辑仍保持未保存状态
             var sb = buffers[data.tabId];
@@ -3426,6 +4174,7 @@
     window.addEventListener("keydown", function (e) {
         if (mermaidEditor && !mermaidEditor.hidden) return; // 图表弹窗自行处理 Esc/Ctrl+Enter
         if (tableEditor && !tableEditor.hidden) return;     // 表格弹窗自行处理 Esc/Ctrl+Enter
+        if (uiEditor && !uiEditor.hidden) return;           // UI 布局弹窗自行处理 Esc/Ctrl+Enter
         if (e.key === "F5") {
             e.preventDefault();
             postMessage({ type: "reload" });

@@ -165,6 +165,88 @@
     </div>
 </div>
 
+<!-- UI 布局可视化设计弹窗 -->
+<div id="ui-editor" class="mermaid-editor ui-editor" hidden>
+    <div class="mermaid-editor-box">
+        <div class="mermaid-editor-head">
+            <span id="ui-editor-title">UI 布局设计</span>
+            <button id="ui-editor-close" type="button" title="关闭（Esc）">✕</button>
+        </div>
+        <div class="ui-editor-toolbar">
+            <label class="ui-size-field">画布
+                <input id="ui-canvas-width" type="number" min="320" max="1920" step="10" value="960"> ×
+                <input id="ui-canvas-height" type="number" min="240" max="1200" step="10" value="600">
+                <button id="ui-canvas-size-apply" type="button">应用尺寸</button>
+            </label>
+            <span id="ui-editor-size" class="ui-editor-size">960 × 600</span>
+            <span class="ui-editor-tip">拖动组件移动，拖动角点缩放；Delete 删除</span>
+        </div>
+        <div class="ui-editor-body">
+            <div class="ui-toolbox">
+                <div class="ui-toolbox-title">添加组件</div>
+                <div id="ui-palette" class="ui-palette">
+                    <button type="button" data-type="page">页面</button>
+                    <button type="button" data-type="navbar">导航栏</button>
+                    <button type="button" data-type="sidebar">侧边栏</button>
+                    <button type="button" data-type="content">内容区</button>
+                    <button type="button" data-type="card">卡片</button>
+                    <button type="button" data-type="button">按钮</button>
+                    <button type="button" data-type="input">输入框</button>
+                    <button type="button" data-type="form">表单</button>
+                    <button type="button" data-type="heading">标题</button>
+                    <button type="button" data-type="text">文本</button>
+                    <button type="button" data-type="image">图片</button>
+                    <button type="button" data-type="avatar">头像</button>
+                    <button type="button" data-type="table">表格</button>
+                    <button type="button" data-type="list">列表</button>
+                    <button type="button" data-type="model3d">3D 模型</button>
+                    <button type="button" data-type="scene3d">3D 空间</button>
+                    <button type="button" data-type="filebrowser">文件浏览器</button>
+                    <button type="button" data-type="database">数据库</button>
+                    <button type="button" data-type="animation">动画</button>
+                    <button type="button" data-type="canvas">Canvas</button>
+                    <button type="button" data-type="gif">GIF</button>
+                </div>
+                <div class="ui-toolbox-tip">
+                    布局以画布像素描述；组件位置和尺寸会写入 ```ui JSON 代码块。
+                </div>
+            </div>
+            <div id="ui-canvas-wrap" class="ui-canvas-wrap">
+                <div id="ui-canvas" class="ui-canvas" tabindex="0"></div>
+            </div>
+            <div class="ui-props">
+                <div class="ui-toolbox-title">属性 <span id="ui-prop-type" class="ui-prop-type"></span></div>
+                <div id="ui-props-empty" class="ui-props-empty">选择一个组件以编辑属性</div>
+                <div id="ui-props-fields" hidden>
+                    <label class="ui-field">文字 / 标题
+                        <input id="ui-prop-text" type="text" maxlength="120"/>
+                    </label>
+                    <label class="ui-field">资源路径
+                        <input id="ui-prop-src" type="text" maxlength="200"
+                               placeholder="图片 / GIF / 模型的相对或绝对路径"/>
+                    </label>
+                    <label class="ui-field">备注 / 说明
+                        <input id="ui-prop-note" type="text" maxlength="160"
+                               placeholder="组件说明或交互备注"/>
+                    </label>
+                    <div class="ui-prop-grid">
+                        <label>X <input id="ui-prop-x" type="number" step="1"/></label>
+                        <label>Y <input id="ui-prop-y" type="number" step="1"/></label>
+                        <label>宽 <input id="ui-prop-w" type="number" step="1"/></label>
+                        <label>高 <input id="ui-prop-h" type="number" step="1"/></label>
+                    </div>
+                    <button id="ui-delete-el" type="button">删除选中组件</button>
+                </div>
+            </div>
+        </div>
+        <div class="mermaid-editor-foot">
+            <span id="ui-editor-hint">从左侧添加组件；Ctrl+Enter 应用 · Esc 取消</span>
+            <button id="ui-editor-cancel" type="button">取消</button>
+            <button id="ui-editor-apply" type="button">应用</button>
+        </div>
+    </div>
+</div>
+
 <script src="vendor/codemirror/codemirror.min.js"></script>
 <script src="vendor/codemirror/mode/xml/xml.min.js"></script>
 <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
