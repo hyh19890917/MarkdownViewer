@@ -81,3 +81,11 @@ WebView2 SDK 依据 MIT 许可证发布，详细文本见 NuGet 包内 LICENSE �
 - 说明：NuGet 包 `UTF.Unknown`，用于 Big5、Shift-JIS、EUC-KR、Windows-125x 等编码识别。
 
 其许可证允许在 GPL 项目中组合使用；完整文本见 NuGet 包内 LICENSE 文件。
+
+## OpenCascade.js / OpenCascade
+
+- 用途：3D 模型控件解析 `.step/.stp/.iges/.igs` 文件并网格化（WebAssembly 几何内核，离线随程序分发）
+- 许可证：**LGPL-2.1**（OpenCascade.js 与 OpenCascade Technology 均以 LGPL-2.1 发布）
+- 项目主页：https://github.com/donalffons/opencascade.js
+- 说明：WASM 构建文件位于 `WebAssets/vendor/opencascade/`，以二进制形式随程序分发；完整许可证文本随程序放在 `WebAssets/vendor/opencascade/LICENSE`。
+

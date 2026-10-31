@@ -3021,6 +3021,75 @@
         return { vertices: pointOrder, faces: faces };
     }
 
+    /* ---- STEP/IGES（NURBS/B-rep）：OpenCascade.js WASM 几何内核 ----
+       懒加载 full 构建，读取后做增量网格化，提取三角形线框。 */
+    var uiOccReadyPromise = null;
+
+    function uiOccReady() {
+        if (!uiOccReadyPromise) {
+            uiOccReadyPromise = import("../vendor/opencascade/oc-wrapper.js").then(function (mod) {
+                var base = (typeof location !== "undefined" && location.origin && location.origin.indexOf("mdviewer.local") >= 0)
+                    ? location.origin
+                    : "https://mdviewer.local";
+                return mod.initOpenCascade(base + "/vendor/opencascade/opencascade.full.wasm.gz");
+            });
+        }
+        return uiOccReadyPromise;
+    }
+
+    function uiOccTessellate(oc, shape) {
+        var vertices = [];
+        var faces = [];
+        var vOff = 0;
+        try {
+            new oc.BRepMesh_IncrementalMesh_2(shape, 0.1, false, 0.5, false);
+            var expFace = new oc.TopExp_Explorer_1();
+            for (expFace.Init(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); expFace.More(); expFace.Next()) {
+                var myFace = oc.TopoDS.Face_1(expFace.Current());
+                var aLocation = new oc.TopLoc_Location_1();
+                var myT = oc.BRep_Tool.Triangulation(myFace, aLocation, 0);
+                if (myT.IsNull()) continue;
+                var tri = myT.get();
+                var n = tri.NbNodes();
+                for (var i = 1; i <= n; i++) {
+                    var p = tri.Node(i).Transformed(aLocation.Transformation());
+                    vertices.push([p.X(), p.Y(), p.Z()]);
+                }
+                var tris = tri.Triangles();
+                var m = tri.NbTriangles();
+                for (var j = 1; j <= m; j++) {
+                    var t = tris.Value(j);
+                    faces.push([t.Value(1) + vOff - 1, t.Value(2) + vOff - 1, t.Value(3) + vOff - 1]);
+                }
+                vOff += n;
+            }
+        } catch (e) {
+            return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+        }
+        return vertices.length && faces.length ? { vertices: vertices, faces: faces } : null;
+    }
+
+    function uiRuntimeLoadCad(textContent, kind) {
+        return uiOccReady().then(function (oc) {
+            var fname = "/mv_cad_" + Date.now() + "_" + Math.random().toString(36).slice(2) + "." + kind;
+            var model = null;
+            try {
+                oc.FS.createDataFile("/", fname, textContent, true, true);
+                var reader = kind === "iges"
+                    ? new oc.IGESControl_Reader_1()
+                    : new oc.STEPControl_Reader_1();
+                var readResult = reader.ReadFile(fname);
+                if (readResult === oc.IFSelect_ReturnStatus.IFSelect_RetDone) {
+                    reader.TransferRoots(new oc.Message_ProgressRange_1());
+                    model = uiOccTessellate(oc, reader.OneShape());
+                }
+            } finally {
+                try { oc.FS.unlink(fname); } catch (e) { /* ignore */ }
+            }
+            return model;
+        });
+    }
+
     function uiRuntimeNormalizeModel(model) {
         if (!model || !model.vertices.length) return null;
         var minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -3139,19 +3208,29 @@
         function load() {
             var source = uiResolveAsset(props.src);
             if (!source) {
-                status.textContent = "未配置模型文件（支持 .obj / .stl / .ply / .glb / .gltf / .step / .stp）";
+                status.textContent = "未配置模型文件（支持 .obj / .stl / .ply / .glb / .step / .stp / .iges / .igs）";
                 return;
             }
+            var lower = source.replace(/[?#].*$/, "").toLowerCase();
+
             fetch(source).then(function (response) {
                 if (!response.ok) throw new Error("HTTP " + response.status);
                 return response.arrayBuffer();
             }).then(function (buffer) {
-                var lower = source.replace(/[?#].*$/, "").toLowerCase();
                 var textContent = null;
                 var model = null;
+                var pending = null;
                 var text = function () {
                     if (textContent == null) textContent = new TextDecoder("utf-8").decode(buffer);
                     return textContent;
+                };
+                var finish = function (m) {
+                    state.model = uiRuntimeNormalizeModel(m);
+                    if (!state.model) {
+                        status.textContent = "模型解析失败或为不支持的几何格式，仅显示占位立方体";
+                        return;
+                    }
+                    render();
                 };
 
                 if (/\.ply$/.test(lower)) {
@@ -3165,31 +3244,39 @@
                         return;
                     }
                 } else if (/\.(step|stp)$/.test(lower)) {
-                    model = uiRuntimeParseStep(text());
+                    status.textContent = "正在初始化几何内核…";
+                    pending = uiRuntimeLoadCad(text(), "step");
+                } else if (/\.(iges|igs)$/.test(lower)) {
+                    status.textContent = "正在初始化几何内核…";
+                    pending = uiRuntimeLoadCad(text(), "iges");
                 } else if (/\.obj$/.test(lower)) {
                     model = uiRuntimeParseObj(text());
                 } else if (/\.stl$/.test(lower)) {
                     model = uiRuntimeParseStlBinary(buffer) || uiRuntimeParseStlAscii(text());
-                } else if (/\.(prt|ptr|iges|igs|x_t|x_b|3mf)$/.test(lower)) {
-                    status.textContent = "暂不支持该格式（.prt / .iges / .3mf 等）";
+                } else if (/\.(prt|ptr|x_t|x_b|3mf)$/.test(lower)) {
+                    status.textContent = "不支持该格式，请先转换为 .step / .stp / .obj / .stl / .glb";
                     return;
                 } else {
                     model = uiRuntimeParseStlBinary(buffer);
                     if (!model) {
                         var t = text();
                         if (/^\s*ply\b/i.test(t)) model = uiRuntimeParsePly(buffer, t);
-                        else if (t.indexOf("ISO-10303-21") >= 0) model = uiRuntimeParseStep(t);
+                        else if (t.indexOf("ISO-10303-21") >= 0) pending = uiRuntimeLoadCad(t, "step");
                         else if (/^\s*v\s+/m.test(t)) model = uiRuntimeParseObj(t);
                         if (!model) model = uiRuntimeParseStlAscii(t);
                     }
                 }
 
-                state.model = uiRuntimeNormalizeModel(model);
-                if (!state.model) {
-                    status.textContent = "模型解析失败或为 NURBS/压缩格式，仅显示占位立方体";
-                    return;
+                if (pending) {
+                    pending.then(function (m) {
+                        if (m) { finish(m); return; }
+                        finish(uiRuntimeParseStep(text()));
+                    }, function () {
+                        finish(uiRuntimeParseStep(text()));
+                    });
+                } else {
+                    finish(model);
                 }
-                render();
             }).catch(function () {
                 status.textContent = "模型加载失败，仅显示占位立方体";
             });
