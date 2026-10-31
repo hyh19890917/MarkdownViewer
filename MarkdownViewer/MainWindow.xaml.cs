@@ -2179,8 +2179,10 @@ namespace MarkdownViewer
             var dlg = new OpenFileDialog
             {
                 Title = "选择控件资源",
-                Filter = "资源文件 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.obj;*.stl;*.glb;*.json;*.csv;*.txt;*.mp4;*.webm)|" +
-                         "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.obj;*.stl;*.glb;*.json;*.csv;*.txt;*.mp4;*.webm|" +
+                Filter = "所有支持格式 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.json;*.csv;*.txt;*.mp4;*.webm;*.obj;*.stl;*.ply;*.glb;*.step;*.stp;*.iges;*.igs)|" +
+                         "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg;*.json;*.csv;*.txt;*.mp4;*.webm;*.obj;*.stl;*.ply;*.glb;*.step;*.stp;*.iges;*.igs|" +
+                         "3D 模型 (*.obj;*.stl;*.ply;*.glb;*.step;*.stp;*.iges;*.igs)|*.obj;*.stl;*.ply;*.glb;*.step;*.stp;*.iges;*.igs|" +
+                         "图片 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg)|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.svg|" +
                          "所有文件 (*.*)|*.*"
             };
             if (dlg.ShowDialog() != true)
