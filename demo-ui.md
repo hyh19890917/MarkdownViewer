@@ -173,12 +173,12 @@
           "type": "model3d",
           "parentId": "",
           "x": 760,
-          "y": 74,
+          "y": 69,
           "w": 180,
           "h": 140,
           "text": "3D 模型",
           "props": {
-            "src": "demo-assets/cube.obj",
+            "src": "assets/WSON8烧录座-20261031-225235-833.step",
             "color": "#0969da"
           }
         },
@@ -210,7 +210,7 @@
           "id": "e20",
           "type": "database",
           "parentId": "",
-          "x": 200,
+          "x": 180,
           "y": 330,
           "w": 340,
           "h": 180,
@@ -218,19 +218,6 @@
           "props": {
             "items": "id|客户|金额\n1|张三|120\n2|李四|80",
             "placeholder": "搜索客户或编号"
-          }
-        },
-        {
-          "id": "e21",
-          "type": "filebrowser",
-          "parentId": "",
-          "x": 570,
-          "y": 334,
-          "w": 170,
-          "h": 176,
-          "text": "文件",
-          "props": {
-            "items": "src/\nassets/\nREADME.md\ndemo-ui.md"
           }
         },
         {
@@ -244,6 +231,32 @@
           "text": "关闭控制台",
           "props": {
             "variant": "secondary"
+          }
+        },
+        {
+          "id": "e33",
+          "type": "model3d",
+          "parentId": "",
+          "x": 519,
+          "y": 329,
+          "w": 240,
+          "h": 180,
+          "text": "",
+          "props": {
+            "src": "assets/立式2X6排母-20261031-225339-111.step"
+          }
+        },
+        {
+          "id": "e35",
+          "type": "model3d",
+          "parentId": "",
+          "x": 144,
+          "y": 144,
+          "w": 240,
+          "h": 180,
+          "text": "",
+          "props": {
+            "src": "assets/SOP8烧录座-20261031-224338-888.step"
           }
         },
         {
@@ -263,8 +276,8 @@
           "id": "e14",
           "type": "table",
           "parentId": "e13",
-          "x": 216,
-          "y": 108,
+          "x": 234,
+          "y": 174,
           "w": 306,
           "h": 130,
           "text": "订单列表",

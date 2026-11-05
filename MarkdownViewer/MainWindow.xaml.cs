@@ -1985,6 +1985,7 @@ namespace MarkdownViewer
         {
             if (RibbonFilePanel == null) return;   // InitializeComponent 期间面板尚未创建
             RibbonFilePanel.Visibility = tag == "file" ? Visibility.Visible : Visibility.Collapsed;
+            RibbonInsertPanel.Visibility = tag == "insert" ? Visibility.Visible : Visibility.Collapsed;
             RibbonEditPanel.Visibility = tag == "edit" ? Visibility.Visible : Visibility.Collapsed;
             RibbonViewPanel.Visibility = tag == "view" ? Visibility.Visible : Visibility.Collapsed;
             RibbonEncodingPanel.Visibility = tag == "encoding" ? Visibility.Visible : Visibility.Collapsed;
@@ -2330,6 +2331,120 @@ namespace MarkdownViewer
 
         private void InsertTaskList_Click(object sender, RoutedEventArgs e) =>
             InsertMarkdown("- [ ] 待办事项\n- [x] 已完成事项\n");
+
+        private void InsertQuote_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("> 引用内容\n");
+
+        private void InsertDivider_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("\n---\n\n");
+
+        private void InsertFormula_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("$x^2 + y^2 = z^2$");
+
+        private void InsertCallout_Click(object sender, RoutedEventArgs e) =>
+            InsertMarkdown("> 💡 **提示**\n> 在这里写提示内容。\n");
+
+        private void InsertLink_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new LinkInsertDialog(this) { Owner = this };
+            if (dlg.ShowDialog() != true) return;
+            InsertMarkdown($"[{dlg.LinkText}]({dlg.LinkUrl})");
+        }
+
+        private void InsertIcon_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe) return;
+            var menu = BuildIconPickerMenu(text => InsertMarkdown(text));
+            menu.PlacementTarget = fe;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+
+        private static ContextMenu BuildIconPickerMenu(Action<string> insert)
+        {
+            var icons = new (string Glyph, string Name, string Color)[]
+            {
+                ("✅", "通过", "#16A34A"), ("❌", "失败", "#DC2626"), ("⚠️", "警告", "#F59E0B"),
+                ("💡", "提示", "#F59E0B"), ("📌", "要点", "#DC2626"), ("⭐", "收藏", "#F59E0B"),
+                ("🔧", "工具", "#6B7280"), ("📦", "模块", "#B45309"), ("⚙️", "配置", "#6B7280"),
+                ("🚀", "发布", "#2563EB"), ("🐞", "缺陷", "#DC2626"), ("📄", "文档", "#2563EB"),
+                ("🔒", "安全", "#4F46E5"), ("⚡", "性能", "#F59E0B"), ("🧩", "集成", "#DB2777")
+            };
+            var menu = new ContextMenu();
+            var wrap = new WrapPanel { Width = 300, Margin = new Thickness(4) };
+            foreach (var item in icons)
+            {
+                var btn = new Button
+                {
+                    Width = 92, Height = 34, Margin = new Thickness(2),
+                    Cursor = System.Windows.Input.Cursors.Hand,
+                    ToolTip = item.Name,
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = item.Glyph, FontSize = 16, Margin = new Thickness(0, 0, 4, 0),
+                                VerticalAlignment = VerticalAlignment.Center,
+                                Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter()
+                                    .ConvertFromString(item.Color)!
+                            },
+                            new TextBlock
+                            {
+                                Text = item.Name, VerticalAlignment = VerticalAlignment.Center,
+                                Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter()
+                                    .ConvertFromString("#57606A")!
+                            }
+                        }
+                    }
+                };
+                var glyph = item.Glyph;
+                btn.Click += (_, _) =>
+                {
+                    menu.IsOpen = false;
+                    insert(glyph + " ");
+                };
+                wrap.Children.Add(btn);
+            }
+            var host = new MenuItem { Header = wrap, StaysOpenOnClick = true };
+            menu.Items.Add(host);
+            return menu;
+        }
+
+        private void InsertSequence_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab == null)
+            {
+                StatusText.Text = "请先打开或新建一个文档";
+                return;
+            }
+            PostToWeb(new { type = "mermaidEditor", mode = "sequence" });
+        }
+
+        private void EditCurrentObject_Click(object sender, RoutedEventArgs e)
+        {
+            if (CurrentTab == null)
+            {
+                StatusText.Text = "请先打开或新建一个文档";
+                return;
+            }
+            PostToWeb(new { type = "editObjectAtCursor" });
+        }
+
+        private void EditTable_Click(object sender, RoutedEventArgs e) =>
+            PostToWeb(new { type = "editObjectAtCursor", only = "table" });
+
+        private void EditMermaid_Click(object sender, RoutedEventArgs e) =>
+            PostToWeb(new { type = "editObjectAtCursor", only = "mermaid" });
+
+        private void EditSequence_Click(object sender, RoutedEventArgs e) =>
+            PostToWeb(new { type = "editObjectAtCursor", only = "sequence" });
+
+        private void EditUiLayout_Click(object sender, RoutedEventArgs e) =>
+            PostToWeb(new { type = "editObjectAtCursor", only = "ui" });
 
         private void SearchInFolder_Click(object sender, RoutedEventArgs e)
         {

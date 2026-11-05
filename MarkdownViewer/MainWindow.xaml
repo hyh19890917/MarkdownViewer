@@ -197,6 +197,46 @@
             </Setter>
         </Style>
 
+        <Style x:Key="RibbonIconButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#4F46E5"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="{TemplateBinding Tag}" FontSize="15"
+                                           Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           FontFamily="Segoe UI Emoji, Segoe UI Symbol, Segoe UI"/>
+                                <ContentPresenter VerticalAlignment="Center"
+                                                  TextElement.Foreground="{DynamicResource TocTextBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource TocSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="RibbonToggle" TargetType="ToggleButton">
             <Setter Property="Foreground" Value="{DynamicResource TocTextBrush}"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -286,6 +326,8 @@
             <StackPanel Orientation="Horizontal" Margin="6,3,6,0">
                 <RadioButton x:Name="RibbonFileTab" Content="文件" Tag="file" GroupName="RibbonTabs"
                              IsChecked="True" Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
+                <RadioButton x:Name="RibbonInsertTab" Content="插入" Tag="insert" GroupName="RibbonTabs"
+                             Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
                 <RadioButton x:Name="RibbonEditTab" Content="编辑" Tag="edit" GroupName="RibbonTabs"
                              Style="{StaticResource RibbonTab}" Checked="RibbonTab_Checked"/>
                 <RadioButton x:Name="RibbonViewTab" Content="视图" Tag="view" GroupName="RibbonTabs"
@@ -334,28 +376,59 @@
                             Click="Exit_Click"/>
                 </WrapPanel>
 
+                <!-- 插入：常用插入对象 -->
+                <WrapPanel x:Name="RibbonInsertPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <TextBlock Text="常用对象：" Style="{StaticResource RibbonLabel}"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="▣" Foreground="#2E7DD7"
+                            Content="图片" Click="InsertImage_Click" ToolTip="选择本地图片并复制到 assets 目录"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="▦" Foreground="#16A34A"
+                            Content="表格" Click="InsertTable_Click" ToolTip="可视化表格编辑器"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="▤" Foreground="#7C3AED"
+                            Content="代码块" Click="InsertCodeBlock_Click"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="∑" Foreground="#EA580C"
+                            Content="公式" Click="InsertFormula_Click" ToolTip="插入 KaTeX 行内公式"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="⛓" Foreground="#0891B2"
+                            Content="链接" Click="InsertLink_Click" ToolTip="插入 Markdown 链接"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="☑" Foreground="#16A34A"
+                            Content="任务列表" Click="InsertTaskList_Click"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="❝" Foreground="#B45309"
+                            Content="引用" Click="InsertQuote_Click"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="―" Foreground="#6B7280"
+                            Content="分隔线" Click="InsertDivider_Click"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="💡" Foreground="#F59E0B"
+                            Content="提示框" Click="InsertCallout_Click" ToolTip="插入带色块的提示 / 警告块"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="★" Foreground="#F59E0B"
+                            Content="图标" Click="InsertIcon_Click" ToolTip="从彩色图标库选择并插入"/>
+                    <Border Style="{StaticResource RibbonSeparator}"/>
+                    <TextBlock Text="图表：" Style="{StaticResource RibbonLabel}"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="◈" Foreground="#4F46E5"
+                            Content="流程图" Click="InsertMermaid_Click" ToolTip="图形化流程图编辑器（支持子图）"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="⇄" Foreground="#0891B2"
+                            Content="时序图" Click="InsertSequence_Click" ToolTip="图形化时序图编辑器"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="⬡" Foreground="#DB2777"
+                            Content="UI 原型" Click="InsertUiLayout_Click"
+                            ToolTip="多页面 UI 原型设计器：容器层级、窗口归属、打开关闭与逻辑连线"/>
+                </WrapPanel>
+
                 <!-- 编辑 -->
                 <WrapPanel x:Name="RibbonEditPanel" Orientation="Horizontal" Visibility="Collapsed">
-                    <Button Style="{StaticResource RibbonButton}" Content="查找 / 替换"
-                            Click="Find_Click" ToolTip="Ctrl+F"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="查找下一个"
-                            Click="FindNext_Click" ToolTip="F3"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="⌕" Foreground="#2563EB"
+                            Content="查找 / 替换" Click="Find_Click" ToolTip="Ctrl+F"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="⇣" Foreground="#2563EB"
+                            Content="查找下一个" Click="FindNext_Click" ToolTip="F3"/>
                     <Border Style="{StaticResource RibbonSeparator}"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入图片..."
-                            Click="InsertImage_Click"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入表格"
-                            Click="InsertTable_Click"
-                            ToolTip="选择行列数后打开可视化表格编辑器；双击已有表格也可编辑"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入流程图"
-                            Click="InsertMermaid_Click"
-                            ToolTip="打开 Mermaid 编辑器，双击已有图表也可编辑"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入 UI 原型"
-                            Click="InsertUiLayout_Click"
-                            ToolTip="打开多页面 UI 原型设计器：容器层级、窗口归属、打开关闭与逻辑连线"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入代码块"
-                            Click="InsertCodeBlock_Click"/>
-                    <Button Style="{StaticResource RibbonButton}" Content="插入任务列表"
-                            Click="InsertTaskList_Click"/>
+                    <TextBlock Text="编辑插入对象：" Style="{StaticResource RibbonLabel}"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="✱" Foreground="#DB2777"
+                            Content="编辑光标处对象" Click="EditCurrentObject_Click"
+                            ToolTip="自动识别光标所在的表格 / 流程图 / 时序图 / UI 原型并打开对应编辑器"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="✎" Foreground="#16A34A"
+                            Content="表格" Click="EditTable_Click" ToolTip="编辑光标处的表格"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="✎" Foreground="#4F46E5"
+                            Content="流程图" Click="EditMermaid_Click" ToolTip="编辑光标处的流程图"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="✎" Foreground="#0891B2"
+                            Content="时序图" Click="EditSequence_Click" ToolTip="编辑光标处的时序图"/>
+                    <Button Style="{StaticResource RibbonIconButton}" Tag="✎" Foreground="#DB2777"
+                            Content="UI 原型" Click="EditUiLayout_Click" ToolTip="编辑光标处的 UI 原型"/>
                 </WrapPanel>
 
                 <!-- 视图 -->
