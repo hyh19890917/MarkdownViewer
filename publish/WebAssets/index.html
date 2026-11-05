@@ -94,6 +94,12 @@
                         </select>
                     </label>
                     <button id="mermaid-autolayout" type="button">自动排列</button>
+                    <div class="mermaid-zoom-row">
+                        <button id="mermaid-zoom-out" type="button" title="缩小">－</button>
+                        <span id="mermaid-zoom-label">100%</span>
+                        <button id="mermaid-zoom-in" type="button" title="放大">＋</button>
+                        <button id="mermaid-zoom-reset" type="button" title="重置缩放">重置</button>
+                    </div>
                     <div id="mermaid-props" class="mermaid-props" hidden>
                         <div id="mermaid-props-title" class="mermaid-toolbox-title">属性</div>
                         <label class="mermaid-field">文字
@@ -108,20 +114,40 @@
                                 <option value="parallelogram">数据</option>
                             </select>
                         </label>
+                        <label class="mermaid-field" id="mermaid-group-field" hidden>所属子图分组
+                            <select id="mermaid-group-select"></select>
+                        </label>
+                        <label class="mermaid-field" id="mermaid-group-rename-field" hidden>分组名称
+                            <input id="mermaid-group-rename" type="text" maxlength="40"/>
+                        </label>
+                        <div id="mermaid-group-make" class="mermaid-group-make" hidden>
+                            <input id="mermaid-group-name" type="text" placeholder="新分组名称" maxlength="40"/>
+                            <button id="mermaid-group-add" type="button">新建并加入</button>
+                        </div>
+                        <div id="mermaid-group-actions" class="mermaid-group-actions" hidden>
+                            <button id="mermaid-group-remove" type="button">移出分组</button>
+                            <button id="mermaid-group-delete" type="button">删除分组</button>
+                        </div>
                         <button id="mermaid-delete-selection" type="button">删除所选</button>
                     </div>
                     <div class="mermaid-toolbox-tip">
                         拖动节点移动；从节点边缘圆点拖到另一个节点连线；双击节点编辑文字。
                     </div>
                 </div>
-                <div class="mermaid-canvas-wrap">
+                <div id="mermaid-canvas-wrap" class="mermaid-canvas-wrap">
                     <svg id="mermaid-canvas" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
                         <defs>
+                            <pattern id="flow-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#eaeef2" stroke-width="1"/>
+                            </pattern>
                             <marker id="mermaid-arrow" viewBox="0 0 10 10" refX="9" refY="5"
                                     markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                                 <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
                             </marker>
                         </defs>
+                        <rect class="fc-grid" x="-20000" y="-20000" width="40000" height="40000"
+                              fill="url(#flow-grid)"/>
+                        <g id="mermaid-group-layer"></g>
                         <g id="mermaid-edge-layer"></g>
                         <g id="mermaid-node-layer"></g>
                     </svg>
@@ -131,6 +157,30 @@
                 <textarea id="mermaid-source" spellcheck="false"
                           placeholder="输入 Mermaid 语法，例如 flowchart TD ..."></textarea>
                 <div id="mermaid-preview" class="mermaid-editor-preview"></div>
+            </div>
+            <div id="mermaid-seq-pane" class="mermaid-visual-pane" hidden>
+                <div class="mermaid-toolbox mermaid-seq-toolbox">
+                    <div class="mermaid-toolbox-title">操作</div>
+                    <div class="mermaid-seq-actions">
+                        <button id="mermaid-seq-add-participant" type="button">+ 参与者</button>
+                        <button id="mermaid-seq-delete" type="button" disabled>删除选中</button>
+                    </div>
+                    <div class="mermaid-zoom-row">
+                        <button id="seq-zoom-out" type="button" title="缩小">－</button>
+                        <span id="seq-zoom-label">100%</span>
+                        <button id="seq-zoom-in" type="button" title="放大">＋</button>
+                        <button id="seq-zoom-reset" type="button" title="重置缩放">重置</button>
+                    </div>
+                    <div class="mermaid-toolbox-tip">
+                        <b>拖动参与者</b>方块左右移动，消息箭头会自动变化。<br/>
+                        <b>在竖线上按住拖动</b>即可画消息：向右为实线、向左为虚线，松开完成；<b>先向外拖出、再回到起始竖线</b>才生成自己指向自己的箭头（单击不会创建）。<br/>
+                        <b>选中消息</b>后可拖动两端的小圆点改发送方 / 接收方（箭头跟随鼠标，松开吸附），上下拖动箭头本体可调整消息顺序。<br/>
+                        <b>双击消息文字</b>直接编辑，单击空白退出；滚轮缩放，右键拖动平移；Delete 删除选中。
+                    </div>
+                </div>
+                <div id="mermaid-seq-canvas-wrap" class="mermaid-canvas-wrap">
+                    <div id="mermaid-seq-preview" class="mermaid-editor-preview mermaid-seq-canvas"></div>
+                </div>
             </div>
         </div>
         <div class="mermaid-editor-foot">
@@ -173,19 +223,29 @@
             <button id="ui-editor-close" type="button" title="关闭（Esc）">✕</button>
         </div>
         <div class="ui-editor-toolbar">
-            <label class="ui-size-field">画布
+            <span class="ui-mode-switch" role="group" aria-label="编辑模式">
+                <button id="ui-mode-canvas" type="button" class="active" title="一个画布内编辑所有窗口，并用连线表达打开/关闭关系">画布模式</button>
+                <button id="ui-mode-preview" type="button" title="在编辑窗口内直接运行原型">预览模式</button>
+            </span>
+            <label class="ui-size-field" title="当前选中窗口 / 弹窗的尺寸">窗口
                 <input id="ui-canvas-width" type="number" min="320" max="1920" step="10" value="960"> ×
                 <input id="ui-canvas-height" type="number" min="240" max="1200" step="10" value="600">
                 <button id="ui-canvas-size-apply" type="button">应用尺寸</button>
             </label>
             <span id="ui-editor-size" class="ui-editor-size">960 × 600</span>
-            <span class="ui-editor-tip">拖动组件移动，拖动角点缩放；Delete 删除</span>
+            <span class="ui-zoom-row">
+                <button id="ui-zoom-out" type="button" title="缩小">－</button>
+                <span id="ui-zoom-label">100%</span>
+                <button id="ui-zoom-in" type="button" title="放大">＋</button>
+                <button id="ui-zoom-reset" type="button" title="重置缩放">重置</button>
+            </span>
+            <span class="ui-editor-tip">滚轮缩放；拖动组件移动，拖动角点缩放；Delete 删除</span>
         </div>
         <div class="ui-page-bar">
             <div id="ui-page-tabs" class="ui-page-tabs"></div>
             <button id="ui-page-add" type="button">+ 新页面</button>
-            <button id="ui-logic-toggle" type="button" title="显示控件与页面之间的逻辑连线">逻辑连线</button>
-            <button id="ui-connect-toggle" type="button" title="依次点击源控件和目标控件/页面创建连线">开始连线</button>
+            <button id="ui-logic-toggle" type="button" title="显示控件之间的数据交互连线（窗口打开/关闭关系始终显示）">逻辑连线</button>
+            <button id="ui-connect-toggle" type="button" title="依次点击源控件和目标控件/窗口框创建连线">开始连线</button>
         </div>
         <div class="ui-editor-body">
             <div class="ui-toolbox">
@@ -213,13 +273,14 @@
                     <button type="button" data-type="gif">GIF</button>
                 </div>
                 <div class="ui-toolbox-tip">
-                    多页面 = 多个窗口；先选中容器再添加组件即可建立层级。交互和窗口归属会写入 ```ui JSON 代码块。
+                    画布模式下所有窗口/弹窗同屏编辑：拖标题栏移动窗口，拖右侧 ⇢ 手柄到另一个窗口建立打开/关闭关系。交互和窗口归属会写入 ```ui JSON 代码块。
                 </div>
                 <div class="ui-toolbox-title ui-structure-title">层级结构</div>
                 <div id="ui-structure" class="ui-structure"></div>
             </div>
             <div id="ui-canvas-wrap" class="ui-canvas-wrap">
                 <div id="ui-canvas" class="ui-canvas" tabindex="0"></div>
+                <div id="ui-preview-host" class="ui-preview-host" hidden></div>
             </div>
             <div class="ui-props">
                 <div class="ui-toolbox-title">属性 <span id="ui-prop-type" class="ui-prop-type"></span></div>

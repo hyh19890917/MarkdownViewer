@@ -25,6 +25,31 @@
     var mermaidCanvas = document.getElementById("mermaid-canvas");
     var mermaidNodeLayer = document.getElementById("mermaid-node-layer");
     var mermaidEdgeLayer = document.getElementById("mermaid-edge-layer");
+    var mermaidGroupLayer = document.getElementById("mermaid-group-layer");
+    var mermaidSeqPane = document.getElementById("mermaid-seq-pane");
+    var mermaidSeqAddParticipant = document.getElementById("mermaid-seq-add-participant");
+    var mermaidSeqDeleteBtn = document.getElementById("mermaid-seq-delete");
+    var mermaidSeqPreview = document.getElementById("mermaid-seq-preview");
+    var mermaidGroupField = document.getElementById("mermaid-group-field");
+    var mermaidGroupSelect = document.getElementById("mermaid-group-select");
+    var mermaidGroupMake = document.getElementById("mermaid-group-make");
+    var mermaidGroupName = document.getElementById("mermaid-group-name");
+    var mermaidGroupAdd = document.getElementById("mermaid-group-add");
+    var mermaidGroupActions = document.getElementById("mermaid-group-actions");
+    var mermaidGroupRemove = document.getElementById("mermaid-group-remove");
+    var mermaidGroupDelete = document.getElementById("mermaid-group-delete");
+    var mermaidGroupRenameField = document.getElementById("mermaid-group-rename-field");
+    var mermaidGroupRename = document.getElementById("mermaid-group-rename");
+    var mermaidCanvasWrap = document.getElementById("mermaid-canvas-wrap");
+    var mermaidZoomIn = document.getElementById("mermaid-zoom-in");
+    var mermaidZoomOut = document.getElementById("mermaid-zoom-out");
+    var mermaidZoomReset = document.getElementById("mermaid-zoom-reset");
+    var mermaidZoomLabel = document.getElementById("mermaid-zoom-label");
+    var mermaidSeqCanvasWrap = document.getElementById("mermaid-seq-canvas-wrap");
+    var seqZoomIn = document.getElementById("seq-zoom-in");
+    var seqZoomOut = document.getElementById("seq-zoom-out");
+    var seqZoomReset = document.getElementById("seq-zoom-reset");
+    var seqZoomLabel = document.getElementById("seq-zoom-label");
     var mermaidDirection = document.getElementById("mermaid-direction");
     var mermaidProps = document.getElementById("mermaid-props");
     var mermaidPropsTitle = document.getElementById("mermaid-props-title");
@@ -46,6 +71,9 @@
     var uiEditorHint = document.getElementById("ui-editor-hint");
     var uiCanvas = document.getElementById("ui-canvas");
     var uiCanvasWrap = document.getElementById("ui-canvas-wrap");
+    var uiPreviewHost = document.getElementById("ui-preview-host");
+    var uiModeCanvasBtn = document.getElementById("ui-mode-canvas");
+    var uiModePreviewBtn = document.getElementById("ui-mode-preview");
     var uiPalette = document.getElementById("ui-palette");
     var uiPropsEmpty = document.getElementById("ui-props-empty");
     var uiPropsFields = document.getElementById("ui-props-fields");
@@ -62,6 +90,10 @@
     var uiPropH = document.getElementById("ui-prop-h");
     var uiCanvasWidth = document.getElementById("ui-canvas-width");
     var uiCanvasHeight = document.getElementById("ui-canvas-height");
+    var uiZoomIn = document.getElementById("ui-zoom-in");
+    var uiZoomOut = document.getElementById("ui-zoom-out");
+    var uiZoomReset = document.getElementById("ui-zoom-reset");
+    var uiZoomLabel = document.getElementById("ui-zoom-label");
     var uiPageTabs = document.getElementById("ui-page-tabs");
     var uiPageAdd = document.getElementById("ui-page-add");
     var uiPageProps = document.getElementById("ui-page-props");
@@ -434,16 +466,27 @@
     var mermaidPreviewSeq = 0;
     var mermaidEditIndex = null;
     var mermaidTab = "visual";
+    var mermaidMode = "flow";   // flow | sequence
     var mermaidApplying = false;
     var flowNodes = [];        // { id, label, shape, x, y, w, h }，x/y 为中心点
     var flowEdges = [];        // { id, from, to, label }
+    var flowGroups = [];       // { id, label, members: [nodeId] }（对应 subgraph）
+    var flowExtras = [];       // 原样保留的 style / classDef / linkStyle 等语句
     var flowDirection = "TD";
     var flowSelected = null;   // { type: "node" | "edge", id }
     var flowNodeSeq = 0;
     var flowEdgeSeq = 0;
+    var FLOW_LINE_H = 18;      // 节点内文字行高（与 15px 字号匹配）
     var flowDrag = null;
     var flowConnect = null;
     var flowTempPath = null;
+    var seqParticipants = [];  // { id, alias }
+    var seqMessages = [];      // { from, to, text, dashed }
+    var seqExtras = [];        // 原样保留的 Note / activate 等语句
+    var seqParticipantSeq = 0;
+    var seqZoom = 1;           // 时序图预览缩放
+    var uiZoom = 1;            // UI 原型画布缩放
+    var flowZoom = 1;          // 流程图画布缩放（由 viewBox 驱动）
     var tableEditIndex = null;
     var tableEditRange = null;
     var tableData = [];
@@ -464,6 +507,11 @@
     var uiConnectFrom = null;
     var uiPickingResource = false;
     var uiDrag = null;
+    var uiMode = "canvas";        // canvas（一画布编辑所有窗口） | preview（窗口内直接预览）
+    var uiSelectedPageId = "";
+    var uiFrameDrag = null;
+    var uiPageLinkDrag = null;
+    var uiPreviewRuntime = null;
     var pendingInserts = {};   // tabId -> [markdown]（跨标签异步插入）
 
     /* ===================== CodeMirror 初始化 ===================== */
@@ -621,9 +669,23 @@
                 node.classList.remove("mermaid-error");
                 node.textContent = src || node.textContent || "";
             }
+            /* 时序图用自带渲染器，保证预览配色与编辑器完全一致 */
+            var source = node.getAttribute("data-mermaid-src") || "";
+            if (/^\s*sequenceDiagram\b/i.test(source)) {
+                var parsedSeq = parseSequence(source);
+                if (parsedSeq && !(parsedSeq.extras && parsedSeq.extras.length)) {
+                    var seqSvg = buildSequencePreviewSvg(parsedSeq);
+                    if (seqSvg) {
+                        node.innerHTML = "";
+                        node.appendChild(seqSvg);
+                        node.setAttribute("data-processed", "true");
+                        return;
+                    }
+                }
+            }
             todo.push(node);
         });
-        if (!todo.length) return;
+        if (!todo.length) { decorateMermaidNodes(); return; }
 
         try {
             var result = window.mermaid.run
@@ -647,6 +709,70 @@
             todo.forEach(function (node) { node.classList.add("mermaid-error"); });
             decorateMermaidNodes();
         }
+    }
+
+    /* 预览区流程图：给 Mermaid 输出的节点 / 连线套上与编辑画布一致的配色 */
+    var FLOW_PREVIEW_TONES = [
+        ["#4f6bed", "#e8ebff"], ["#0e9f6e", "#e0f7ee"], ["#e8590c", "#fdeade"], ["#9c36b5", "#f6e8fb"],
+        ["#0b7285", "#ddf1f5"], ["#c2255c", "#fbe2eb"], ["#6b8e23", "#eef5dc"], ["#1c7ed6", "#e0f0fd"]
+    ];
+    var FLOW_PREVIEW_TONES_DARK = [
+        ["#8b9bff", "#23264a"], ["#3ddc97", "#17362b"], ["#ff9f43", "#3d2617"], ["#d17ce8", "#33203b"],
+        ["#3bc9db", "#143036"], ["#f06595", "#3a1a26"], ["#a9c94a", "#2b3315"], ["#4dabf7", "#10283d"]
+    ];
+
+    function decorateFlowColors(container) {
+        if (!container) return;
+        var svg = container.querySelector("svg");
+        if (!svg) return;
+        var nodes = svg.querySelectorAll("g.node");
+        if (!nodes.length) return;
+        var dark = document.body.classList.contains("theme-dark");
+        var palette = dark ? FLOW_PREVIEW_TONES_DARK : FLOW_PREVIEW_TONES;
+        var colorOf = function (id) {
+            var tone = palette[flowToneIndex(id)] || palette[0];
+            return { line: tone[0], fill: tone[1] };
+        };
+        nodes.forEach(function (group) {
+            var raw = group.getAttribute("id") || "";
+            var nodeId = raw.replace(/^.*?flowchart-/, "").replace(/-\d+$/, "") || raw;
+            var color = colorOf(nodeId);
+            group.querySelectorAll("rect, polygon, circle, ellipse, path").forEach(function (shape) {
+                if (shape.closest && shape.closest("g.label")) return;
+                shape.style.fill = color.fill;
+                shape.style.stroke = color.line;
+                shape.style.strokeWidth = "1.6px";
+            });
+        });
+        svg.querySelectorAll(".edgePaths path").forEach(function (path) {
+            var cls = path.getAttribute("class") || "";
+            var fromMatch = /(?:^|\s)LS-(\S+)/.exec(cls);
+            var fromId = fromMatch ? fromMatch[1] : "";
+            if (!fromId) {
+                var idMatch = /^L[-_](.+?)[-_][^-_]+?[-_]\d+$/.exec(path.getAttribute("id") || "");
+                fromId = idMatch ? idMatch[1] : "";
+            }
+            var color = colorOf(fromId);
+            path.style.stroke = color.line;
+            path.style.strokeWidth = "2px";
+            var ref = /url\(#(.+?)\)/.exec(path.getAttribute("marker-end") || "");
+            if (!ref) return;
+            var baseMarker = document.getElementById(ref[1]);
+            if (!baseMarker || !baseMarker.parentNode) return;
+            /* Mermaid 的所有连线共用一个箭头 marker，需要按色调克隆后再单独上色 */
+            var cloneId = ref[1] + "-tone-" + flowToneIndex(fromId);
+            var clone = document.getElementById(cloneId);
+            if (!clone) {
+                clone = baseMarker.cloneNode(true);
+                clone.setAttribute("id", cloneId);
+                baseMarker.parentNode.appendChild(clone);
+            }
+            clone.querySelectorAll("path").forEach(function (head) {
+                head.style.fill = color.line;
+                head.style.stroke = color.line;
+            });
+            path.setAttribute("marker-end", "url(#" + cloneId + ")");
+        });
     }
 
     /* 在每个图表右上角加“编辑”按钮（Mermaid 渲染会替换内容，需在渲染后重建） */
@@ -680,7 +806,123 @@
             } else if (!hasError && hint) {
                 hint.parentNode.removeChild(hint);
             }
+            /* 流程图预览套用与编辑画布一致的配色 */
+            if (!hasError) decorateFlowColors(node);
+            /* 单图缩放控件（悬停显示） */
+            addDiagramZoomUi(node);
         }
+        // 重新渲染后的图表需要重新套用当前缩放比例
+        applyDiagramZoom();
+    }
+
+    /* 图表（流程图 / 时序图预览）随「缩放」一起放大缩小
+       Mermaid 输出的 svg 带 inline max-width（图上为自然宽度），按比例重设即可，
+       原始宽度记录在 data-zoom-w，重复缩放不会漂移。
+       额外支持单图局部缩放（Ctrl / Alt + 滚轮，或左上角悬停控件的 −／+/ 100%）。 */
+    var diagramZoom = 1;
+    var diagramScales = Object.create(null);
+
+    function diagramKeyOf(node) {
+        if (!node || !node.getAttribute) return "";
+        var cached = node.getAttribute("data-diagram-key");
+        if (cached) return cached;
+        var src = node.getAttribute("data-mermaid-src") || "";
+        var h = 0;
+        for (var i = 0; i < src.length; i++) h = (h * 31 + src.charCodeAt(i)) | 0;
+        var key = (h >>> 0).toString(36) + "-" + src.length;
+        node.setAttribute("data-diagram-key", key);
+        return key;
+    }
+
+    function diagramNodeScale(node) {
+        var key = diagramKeyOf(node);
+        var v = key ? diagramScales[key] : undefined;
+        return (typeof v === "number" && isFinite(v) && v > 0) ? v : 1;
+    }
+
+    function diagramHostOf(svg) {
+        var host = svg ? svg.parentNode : null;
+        while (host && host !== document && !(host.classList && host.classList.contains("mermaid"))) {
+            host = host.parentNode;
+        }
+        return (host && host.classList && host.classList.contains("mermaid")) ? host : null;
+    }
+
+    function applyDiagramZoom() {
+        var z = diagramZoom > 0 ? diagramZoom : 1;
+        var svgs = document.querySelectorAll("#md-body .mermaid svg");
+        for (var i = 0; i < svgs.length; i++) {
+            var svg = svgs[i];
+            var host = diagramHostOf(svg);
+            var nodeScale = diagramNodeScale(host);
+            var base = parseFloat(svg.getAttribute("data-zoom-w") || "");
+            if (!(base > 0)) {
+                var inline = svg.getAttribute("style") || "";
+                var mw = /max-width:\s*([\d.]+)px/.exec(inline);
+                base = mw ? parseFloat(mw[1]) : (parseFloat(svg.getAttribute("width")) || 0);
+                if (!(base > 0)) continue;
+                svg.setAttribute("data-zoom-w", base.toFixed(2));
+            }
+            var w = Math.max(60, Math.round(base * z * nodeScale));
+            /* max-width 管目标宽度，width:100% 让超宽的图表自动缩到容器宽度，不会被裁切 */
+            svg.style.maxWidth = w + "px";
+            svg.style.width = "100%";
+            svg.style.height = "auto";
+            if (host) {
+                var label = host.querySelector(".mermaid-zoom-label");
+                if (label) label.textContent = Math.round(z * nodeScale * 100) + "%";
+            }
+        }
+    }
+
+    /* factor 为 0 表示复位该图表（回 100%） */
+    function stepDiagramScale(node, factor) {
+        if (!node) return;
+        var key = diagramKeyOf(node);
+        if (!key) return;
+        if (!factor) {
+            delete diagramScales[key];
+        } else {
+            var next = diagramNodeScale(node) * factor;
+            diagramScales[key] = Math.min(4, Math.max(0.2, Math.round(next * 100) / 100));
+        }
+        applyDiagramZoom();
+    }
+
+    /* 图表左上角的缩放控件 + Ctrl / Alt + 滚轮单独缩放该图 */
+    function addDiagramZoomUi(node) {
+        if (!node || node.querySelector(".mermaid-zoom-ui")) return;
+        var bar = document.createElement("div");
+        bar.className = "mermaid-zoom-ui";
+        function mkBtn(text, title, handler, extraClass) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "mermaid-zoom-btn" + (extraClass ? " " + extraClass : "");
+            b.textContent = text;
+            b.title = title;
+            b.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                handler();
+            });
+            return b;
+        }
+        bar.appendChild(mkBtn("－", "缩小该图表（Ctrl / Alt + 滚轮）", function () {
+            stepDiagramScale(node, 1 / 1.15);
+        }));
+        bar.appendChild(mkBtn("100%", "点击恢复该图表原始大小", function () {
+            stepDiagramScale(node, 0);
+        }, "mermaid-zoom-label"));
+        bar.appendChild(mkBtn("＋", "放大该图表（Ctrl / Alt + 滚轮）", function () {
+            stepDiagramScale(node, 1.15);
+        }));
+        node.appendChild(bar);
+        node.addEventListener("wheel", function (e) {
+            if (!(e.ctrlKey || e.metaKey || e.altKey)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            stepDiagramScale(node, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+        }, { passive: false });
     }
 
     /* 在每个表格右上角加“编辑”按钮；表格外包一层定位容器 */
@@ -713,25 +955,52 @@
     }
 
     /* ===================== Mermaid 编辑弹窗 ===================== */
-    function openMermaidEditor(index, source) {
+    function openMermaidEditor(index, source, mode) {
         if (!mermaidEditor) return;
         var parsed = (index === null || index === undefined || index === "") ? null : parseInt(index, 10);
         mermaidEditIndex = isNaN(parsed) ? null : parsed;
         var text = (typeof source === "string") ? source : "";
         var isNew = mermaidEditIndex === null;
+        mermaidMode = (mode === "sequence") ? "sequence" : "flow";
 
         if (isNew && !text.trim()) {
-            initDefaultFlowGraph();
-            mermaidSource.value = serializeFlowGraph();
+            if (mermaidMode === "sequence") {
+                initDefaultSequence();
+                mermaidSource.value = serializeSequence();
+            } else {
+                initDefaultFlowGraph();
+                mermaidSource.value = serializeFlowGraph();
+            }
         } else {
             mermaidSource.value = text;
+            if (/^\s*sequenceDiagram\b/i.test(text)) mermaidMode = "sequence";
         }
 
         mermaidEditor.hidden = false;
-        if (!isNew && !importFlowGraph(text)) {
+        if (mermaidMode === "sequence") {
+            var parsedSeq = parseSequence(mermaidSource.value);
+            if (parsedSeq) {
+                seqParticipants = parsedSeq.participants;
+                seqMessages = parsedSeq.messages;
+                seqExtras = parsedSeq.extras;
+                seqParticipantSeq = seqParticipants.length;
+                seqSelected = null;
+                seqDrag = null;
+                seqLink = null;
+                setMermaidTab("visual", true);
+                renderSequenceEditor();
+                updateSequencePreview();
+                mermaidEditorHint.textContent =
+                    "拖动参与者左右移动；在竖线上按住拖动创建消息；双击消息文字编辑 · Ctrl+Enter 应用";
+            } else {
+                setMermaidTab("source", true);
+                mermaidEditorHint.textContent =
+                    "该时序图包含 loop / alt / 激活等复杂结构，请在源码模式编辑";
+            }
+        } else if (!importFlowGraph(mermaidSource.value)) {
             setMermaidTab("source", true);
             mermaidEditorHint.textContent =
-                "当前源码包含图形编辑器暂不支持的语法（如 subgraph/样式），请继续使用源码模式";
+                "当前源码包含图形编辑器暂不支持的语法，请继续使用源码模式";
         } else {
             setMermaidTab("visual", true);
             // 把自动布局后的位置写回源码，重新打开时保持相同布局
@@ -744,12 +1013,15 @@
             if (mermaidTab === "source") {
                 mermaidSource.focus();
                 mermaidSource.select();
+            } else if (mermaidMode === "flow" && mermaidVisualPane && !mermaidVisualPane.hidden) {
+                fitFlowViewToContent();
             }
         }, 30);
     }
 
     function closeMermaidEditor() {
         if (!mermaidEditor) return;
+        cancelSeqEdit();
         mermaidEditor.hidden = true;
         mermaidPreviewSeq++;
         mermaidPreview.innerHTML = "";
@@ -789,8 +1061,8 @@
         var lines = [];
         raw.forEach(function (line) {
             if (!line) { lines.push(""); return; }
-            // 简单按 18 个字符换行，避免长文本溢出节点
-            for (var i = 0; i < line.length; i += 18) lines.push(line.slice(i, i + 18));
+            // 简单按 16 个字符换行，避免长文本溢出节点
+            for (var i = 0; i < line.length; i += 16) lines.push(line.slice(i, i + 16));
         });
         if (!lines.length) lines.push("");
         return lines.slice(0, 5);
@@ -800,10 +1072,10 @@
         var lines = flowDisplayLines(node.label);
         var maxChars = 0;
         lines.forEach(function (line) { maxChars = Math.max(maxChars, line.length); });
-        node.w = Math.max(90, Math.min(280, maxChars * 13 + 32));
-        var base = node.shape === "diamond" ? 72 : node.shape === "circle" ? 70 : 50;
-        node.h = base + Math.max(0, lines.length - 1) * 16;
-        if (node.shape === "diamond") node.w = Math.max(node.w, node.h + 20);
+        node.w = Math.max(96, Math.min(320, maxChars * 15 + 36));
+        var base = node.shape === "diamond" ? 78 : node.shape === "circle" ? 74 : 54;
+        node.h = base + Math.max(0, lines.length - 1) * FLOW_LINE_H;
+        if (node.shape === "diamond") node.w = Math.max(node.w, node.h + 24);
         if (node.shape === "circle") node.w = Math.max(node.w, node.h);
     }
 
@@ -829,6 +1101,8 @@
     function initDefaultFlowGraph() {
         flowNodes = [];
         flowEdges = [];
+        flowGroups = [];
+        flowExtras = [];
         flowNodeSeq = 0;
         flowEdgeSeq = 0;
         flowDirection = "TD";
@@ -875,28 +1149,44 @@
         return { id: id, label: label || id, shape: shape };
     }
 
-    /* 从 Mermaid 源码恢复图形（支持常见 flowchart/graph 节点与箭头；复杂语法返回 false） */
+    /* 从 Mermaid 源码恢复图形（支持 flowchart/graph、subgraph 分组与常见节点/箭头） */
     function importFlowGraph(source) {
         var lines = String(source || "").split(/\r?\n/);
         var nodes = [];
         var edges = [];
         var nodeMap = {};
         var positions = {};
+        var groupBoxes = Object.create(null);
+        var groups = [];
+        var groupStack = [];
+        var extras = [];
         var direction = "TD";
         var sawDirective = false;
 
+        function currentGroup() {
+            return groupStack.length ? groupStack[groupStack.length - 1] : null;
+        }
+
         function ensureNode(parsed) {
+            var grp = currentGroup();
             if (!nodeMap[parsed.id]) {
                 var node = {
                     id: parsed.id, label: parsed.label, shape: parsed.shape,
-                    x: 0, y: 0
+                    x: 0, y: 0, group: grp ? grp.id : ""
                 };
                 sizeFlowNode(node);
                 nodeMap[parsed.id] = node;
                 nodes.push(node);
-            } else if (parsed.label !== parsed.id) {
-                nodeMap[parsed.id].label = parsed.label;
-                nodeMap[parsed.id].shape = parsed.shape;
+                if (grp && grp.members.indexOf(parsed.id) < 0) grp.members.push(parsed.id);
+            } else {
+                if (parsed.label !== parsed.id) {
+                    nodeMap[parsed.id].label = parsed.label;
+                    nodeMap[parsed.id].shape = parsed.shape;
+                }
+                if (grp && !nodeMap[parsed.id].group) {
+                    nodeMap[parsed.id].group = grp.id;
+                    if (grp.members.indexOf(parsed.id) < 0) grp.members.push(parsed.id);
+                }
             }
             return nodeMap[parsed.id];
         }
@@ -909,7 +1199,45 @@
                 positions[posMatch[1]] = { x: parseFloat(posMatch[2]), y: parseFloat(posMatch[3]) };
                 continue;
             }
+            var groupBoxMatch = /^%%\s*mdviewer:group\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/i.exec(t);
+            if (groupBoxMatch) {
+                groupBoxes[groupBoxMatch[1]] = {
+                    x: parseFloat(groupBoxMatch[2]),
+                    y: parseFloat(groupBoxMatch[3]),
+                    w: parseFloat(groupBoxMatch[4]),
+                    h: parseFloat(groupBoxMatch[5])
+                };
+                continue;
+            }
             if (t.indexOf("%%") === 0) continue;
+
+            if (/^end\b/i.test(t)) {
+                groupStack.pop();
+                continue;
+            }
+            var subMatch = /^subgraph\b\s*([\s\S]*)$/i.exec(t);
+            if (subMatch) {
+                var rest = subMatch[1].trim();
+                var gid = rest;
+                var glabel = rest;
+                var gm = /^([^\s\[\]]+)\s*(?:\[\s*"?([\s\S]*?)"?\s*\])?$/.exec(rest);
+                if (gm) {
+                    gid = gm[1] || rest;
+                    glabel = (gm[2] != null && gm[2] !== "") ? gm[2] : gid;
+                }
+                if (!gid) { gid = "g" + (groups.length + 1); glabel = gid; }
+                var existing = null;
+                for (var gi = 0; gi < groups.length; gi++) {
+                    if (groups[gi].id === gid) { existing = groups[gi]; break; }
+                }
+                if (!existing) {
+                    existing = { id: gid, label: glabel || gid, members: [] };
+                    groups.push(existing);
+                }
+                groupStack.push(existing);
+                sawDirective = true;
+                continue;
+            }
 
             var dirMatch = /^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\b/i.exec(t);
             if (dirMatch) {
@@ -918,19 +1246,32 @@
                 sawDirective = true;
                 continue;
             }
-            if (/^(subgraph|end|style|classDef|class|linkStyle|click|direction|accTitle|accDescr)\b/i.test(t)) {
-                return false;
+            if (/^(style|classDef|class|linkStyle|click|accTitle|accDescr|direction)\b/i.test(t)) {
+                extras.push(t);
+                sawDirective = true;
+                continue;
             }
 
-            var parts = t.split("-->");
-            if (parts.length === 1) {
+            // 解析箭头：支持 --> 与 <-->（双向）
+            var arrowRe = /\s*(<-->|-->)\s*/g;
+            var segs = [];
+            var arrowKinds = [];
+            var lastIdx = 0;
+            var am;
+            while ((am = arrowRe.exec(t)) !== null) {
+                segs.push(t.slice(lastIdx, am.index));
+                arrowKinds.push(am[1]);
+                lastIdx = am.index + am[0].length;
+            }
+            if (!segs.length) {
                 var only = parseFlowNodeToken(t);
                 if (!only) return false;
                 ensureNode(only);
                 continue;
             }
+            segs.push(t.slice(lastIdx));
 
-            var first = parts[0].trim();
+            var first = segs[0].trim();
             var firstLabel = "";
             var dashLabel = /^(.*?)\s+--\s+(.+)$/.exec(first);
             if (dashLabel) {
@@ -941,21 +1282,26 @@
             if (!current) return false;
             current = ensureNode(current);
 
-            for (var k = 1; k < parts.length; k++) {
-                var part = parts[k].trim();
+            for (var k = 1; k < segs.length; k++) {
+                var part = segs[k].trim();
                 var label = "";
                 if (part.charAt(0) === "|") {
                     var end = part.indexOf("|", 1);
                     if (end < 0) return false;
                     label = unescapeFlowLabel(part.slice(1, end).trim());
+                    if ((label.charAt(0) === "\"" && label.slice(-1) === "\"") ||
+                        (label.charAt(0) === "'" && label.slice(-1) === "'")) {
+                        label = label.slice(1, -1);
+                    }
                     part = part.slice(end + 1).trim();
                 }
                 var next = parseFlowNodeToken(part);
                 if (!next) return false;
                 next = ensureNode(next);
                 if (current.id !== next.id) {
-                    addFlowEdgeRawTo(edges, current.id, next.id,
+                    var edge = addFlowEdgeRawTo(edges, current.id, next.id,
                         (k === 1 ? firstLabel : "") || label);
+                    edge.bidir = arrowKinds[k - 1] === "<-->";
                 }
                 current = next;
             }
@@ -966,6 +1312,15 @@
 
         flowNodes = nodes;
         flowEdges = edges;
+        flowGroups = groups.map(function (group) {
+            return {
+                id: group.id,
+                label: group.label,
+                members: group.members.slice(),
+                box: groupBoxes[group.id] || null
+            };
+        });
+        flowExtras = extras.slice();
         flowDirection = direction;
         flowNodeSeq = 0;
         nodes.forEach(function (node) {
@@ -974,38 +1329,203 @@
         });
         flowEdgeSeq = edges.length;
         flowSelected = null;
-        nodes.forEach(function (node, index) {
+        var withPos = [];
+        nodes.forEach(function (node) {
             var p = positions[node.id];
             if (p) {
                 node.x = p.x;
                 node.y = p.y;
+                withPos.push(node);
             } else {
                 node.x = null;
             }
             sizeFlowNode(node);
         });
+        // 旧版“单列自动布局”留下的坐标视为过期，重新做分层排列
+        if (withPos.length >= 3) {
+            var first = withPos[0];
+            var sameX = true, sameY = true;
+            for (var wi = 1; wi < withPos.length; wi++) {
+                if (Math.abs(withPos[wi].x - first.x) >= 2) sameX = false;
+                if (Math.abs(withPos[wi].y - first.y) >= 2) sameY = false;
+            }
+            if (sameX || sameY) {
+                nodes.forEach(function (node) { node.x = null; });
+            }
+        }
         layoutFlowNodes(true);
         return true;
     }
 
     function addFlowEdgeRawTo(list, from, to, label) {
-        list.push({ id: "e" + (list.length + 1), from: from, to: to, label: label || "" });
+        var edge = {
+            id: "e" + (list.length + 1), from: from, to: to,
+            label: label || "", bidir: false
+        };
+        list.push(edge);
+        return edge;
     }
 
+    /* 分层布局：按边的走向分层 + 同层重心排序 + 分组聚类，效果接近 Mermaid 预览 */
     function layoutFlowNodes(onlyMissing) {
-        var count = flowNodes.length;
-        flowNodes.forEach(function (node, index) {
-            if (onlyMissing && node.x !== null && isFinite(node.x)) return;
-            var x = 500;
-            var y = 90 + index * 120;
-            if (flowDirection === "LR") { x = 120 + index * 180; y = 320; }
-            else if (flowDirection === "RL") { x = 1080 - index * 180; y = 320; }
-            else if (flowDirection === "BT") { x = 500; y = 690 - index * 120; }
-            node.x = Math.max(70, Math.min(1130, x));
-            node.y = Math.max(50, Math.min(750, y));
+        if (!flowNodes.length) return;
+        var CANVAS_W = 1200, CANVAS_H = 800;
+        var NODE_GAP = 56;      // 同层节点间距
+        var LEVEL_GAP = 86;     // 层与层之间的额外间距
+        // 重新布局后节点位置变化，分组框按新位置重新生成包围盒
+        if (!onlyMissing) {
+            flowGroups.forEach(function (group) { group.box = null; });
+        }
+        // 1) Kahn 拓扑分层；环内节点按已定层邻居回退
+        var indeg = Object.create(null);
+        flowNodes.forEach(function (n) { indeg[n.id] = 0; });
+        flowEdges.forEach(function (e) {
+            if (e.from !== e.to && indeg[e.to] !== undefined) indeg[e.to]++;
         });
-        // 保持数量为 0 时也不报错
-        if (!count) return;
+        var level = Object.create(null);
+        var queue = flowNodes
+            .filter(function (n) { return indeg[n.id] === 0; })
+            .map(function (n) { return n.id; });
+        if (!queue.length) queue = [flowNodes[0].id];
+        queue.forEach(function (id) { level[id] = 0; });
+        var remaining = Object.create(null);
+        flowNodes.forEach(function (n) { remaining[n.id] = indeg[n.id]; });
+        var settled = Object.create(null);
+        for (var qi = 0; qi < queue.length; qi++) {
+            var cur = queue[qi];
+            if (settled[cur]) continue;
+            settled[cur] = true;
+            flowEdges.forEach(function (e) {
+                if (e.from !== cur) return;
+                /* 已定层的节点不再抬高，避免回边（环）把入口节点推到最底层 */
+                if (!settled[e.to] && (level[e.to] === undefined || level[e.to] < level[cur] + 1)) {
+                    level[e.to] = level[cur] + 1;
+                }
+                remaining[e.to]--;
+                if (remaining[e.to] === 0 && level[e.to] !== undefined && !settled[e.to]) {
+                    queue.push(e.to);
+                }
+            });
+        }
+        flowNodes.forEach(function (n) {
+            if (level[n.id] !== undefined) return;
+            var best = -1;
+            flowEdges.forEach(function (e) {
+                if (e.to === n.id && level[e.from] !== undefined) {
+                    best = Math.max(best, level[e.from]);
+                }
+            });
+            level[n.id] = best >= 0 ? best + 1 : 0;
+        });
+
+        var maxLevel = 0;
+        flowNodes.forEach(function (n) { maxLevel = Math.max(maxLevel, level[n.id]); });
+        var rows = [];
+        for (var li = 0; li <= maxLevel; li++) rows.push([]);
+        flowNodes.forEach(function (n) { rows[level[n.id]].push(n); });
+
+        // 2) 重心排序（上下各扫几遍）减少连线交叉
+        var pos = Object.create(null);
+        rows.forEach(function (row) {
+            row.forEach(function (n, idx) { pos[n.id] = idx; });
+        });
+        function neighborPos(node, dir) {
+            var sum = 0, count = 0;
+            flowEdges.forEach(function (e) {
+                var other = null;
+                if (dir === "in" && e.to === node.id) other = e.from;
+                else if (dir === "out" && e.from === node.id) other = e.to;
+                if (other != null && pos[other] !== undefined) {
+                    sum += pos[other];
+                    count++;
+                }
+            });
+            return count ? sum / count : pos[node.id];
+        }
+        for (var sweep = 0; sweep < 4; sweep++) {
+            for (var r = 1; r < rows.length; r++) {
+                rows[r].forEach(function (n) { n._bary = neighborPos(n, "in"); });
+                rows[r].sort(function (a, b) { return a._bary - b._bary; });
+                rows[r].forEach(function (n, idx) { pos[n.id] = idx; });
+            }
+            for (var r2 = rows.length - 2; r2 >= 0; r2--) {
+                rows[r2].forEach(function (n) { n._bary = neighborPos(n, "out"); });
+                rows[r2].sort(function (a, b) { return a._bary - b._bary; });
+                rows[r2].forEach(function (n, idx) { pos[n.id] = idx; });
+            }
+        }
+
+        // 3) 同层内分组聚类：同组节点尽量排在一起
+        var groupIdx = Object.create(null);
+        flowGroups.forEach(function (g, idx) { groupIdx[g.id] = idx; });
+        rows.forEach(function (row) {
+            row.sort(function (a, b) {
+                var ga = a.group && groupIdx[a.group] !== undefined ? groupIdx[a.group] : 9999;
+                var gb = b.group && groupIdx[b.group] !== undefined ? groupIdx[b.group] : 9999;
+                if (ga !== gb) return ga - gb;
+                return (a._bary || 0) - (b._bary || 0);
+            });
+        });
+
+        var vertical = flowDirection === "TD" || flowDirection === "BT";
+        var reverse = flowDirection === "BT" || flowDirection === "RL";
+        var count = rows.length;
+
+        // 4) 计算层中心（跨层方向的坐标）
+        var centers = [];
+        var cursorCross = 0;
+        rows.forEach(function (row) {
+            var maxSize = 50;
+            row.forEach(function (n) {
+                maxSize = Math.max(maxSize, vertical ? n.h : n.w);
+            });
+            centers.push(cursorCross + maxSize / 2);
+            cursorCross += maxSize + LEVEL_GAP;
+        });
+        var span = cursorCross - LEVEL_GAP;
+        var limit = (vertical ? CANVAS_H : CANVAS_W) - 120;
+        var scale = span > limit ? limit / span : 1;
+        if (scale < 1) {
+            centers = centers.map(function (c) { return c * scale; });
+            span = span * scale;
+        }
+        var crossOffset = ((vertical ? CANVAS_H : CANVAS_W) - span) / 2;
+
+        // 5) 写入坐标
+        rows.forEach(function (row, rowIndex) {
+            if (!row.length) return;
+            var center = crossOffset + centers[reverse ? count - 1 - rowIndex : rowIndex];
+            var mainTotal = 0;
+            row.forEach(function (n) {
+                mainTotal += (vertical ? n.w : n.h) + NODE_GAP;
+            });
+            mainTotal -= NODE_GAP;
+            var mainLimit = vertical ? CANVAS_W : CANVAS_H;
+            var cursorMain = Math.max(30, (mainLimit - mainTotal) / 2);
+            row.forEach(function (n) {
+                var main = cursorMain + (vertical ? n.w : n.h) / 2;
+                if (!(onlyMissing && n.x !== null && isFinite(n.x))) {
+                    if (vertical) {
+                        n.x = main;
+                        n.y = center;
+                    } else {
+                        n.x = center;
+                        n.y = main;
+                    }
+                }
+                cursorMain += (vertical ? n.w : n.h) + NODE_GAP;
+                n._bary = null;
+            });
+        });
+
+        // 6) 兜底：限制在画布内
+        flowNodes.forEach(function (n) {
+            if (onlyMissing && n.x !== null && isFinite(n.x)) return;
+            var halfW = (n.w || 100) / 2 + 8;
+            var halfH = (n.h || 40) / 2 + 8;
+            n.x = Math.max(halfW, Math.min(CANVAS_W - halfW, n.x));
+            n.y = Math.max(halfH, Math.min(CANVAS_H - halfH, n.y));
+        });
     }
 
     function escapeFlowLabel(label) {
@@ -1047,14 +1567,1214 @@
                 Math.round(node.x === null ? 500 : node.x) + " " +
                 Math.round(node.y === null ? 100 : node.y));
         });
+        flowGroups.forEach(function (group) {
+            var box = group.box || (typeof ensureGroupBox === "function" ? ensureGroupBox(group) : null);
+            if (!box) return;
+            out.push("  %% mdviewer:group " + group.id + " " +
+                Math.round(box.x) + " " + Math.round(box.y) + " " +
+                Math.round(box.w) + " " + Math.round(box.h));
+        });
+        var emitted = Object.create(null);
+        // 顶层节点（不属于任何 subgraph）
         flowNodes.forEach(function (node) {
+            if (node.group) return;
             out.push("  " + node.id + flowShapeText(node));
+            emitted[node.id] = true;
+        });
+        // 子图分组
+        flowGroups.forEach(function (group) {
+            var members = flowNodes.filter(function (node) { return node.group === group.id; });
+            if (!members.length) return;
+            out.push("  subgraph " + group.id + "[\"" + escapeFlowLabel(group.label || group.id) + "\"]");
+            members.forEach(function (node) {
+                out.push("    " + node.id + flowShapeText(node));
+                emitted[node.id] = true;
+            });
+            out.push("  end");
+        });
+        flowNodes.forEach(function (node) {
+            if (!emitted[node.id]) out.push("  " + node.id + flowShapeText(node));
         });
         flowEdges.forEach(function (edge) {
             var label = edge.label ? "|" + escapeFlowLabel(edge.label) + "|" : "";
-            out.push("  " + edge.from + " -->" + label + " " + edge.to);
+            out.push("  " + edge.from + (edge.bidir ? " <-->" : " -->") + label + " " + edge.to);
         });
+        flowExtras.forEach(function (line) { out.push("  " + line); });
         return out.join("\n") + "\n";
+    }
+
+    /* 分组框几何：首次按成员节点包围盒生成，之后可拖动/拉伸并持久化 */
+    function ensureGroupBox(group) {
+        if (group.box) return group.box;
+        var members = flowNodes.filter(function (node) { return node.group === group.id; });
+        if (members.length) {
+            var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            members.forEach(function (node) {
+                minX = Math.min(minX, node.x - node.w / 2);
+                maxX = Math.max(maxX, node.x + node.w / 2);
+                minY = Math.min(minY, node.y - node.h / 2);
+                maxY = Math.max(maxY, node.y + node.h / 2);
+            });
+            var pad = 24;
+            group.box = {
+                x: minX - pad,
+                y: minY - pad - 18,
+                w: (maxX - minX) + pad * 2,
+                h: (maxY - minY) + pad * 2 + 18
+            };
+        } else {
+            group.box = { x: 420, y: 120, w: 260, h: 160 };
+        }
+        return group.box;
+    }
+
+    function expandGroupBoxToNode(group, node) {
+        if (!group.box) {
+            group.box = {
+                x: node.x - node.w / 2 - 24,
+                y: node.y - node.h / 2 - 40,
+                w: node.w + 48,
+                h: node.h + 64
+            };
+            return;
+        }
+        var box = group.box;
+        var left = node.x - node.w / 2 - 22;
+        var top = node.y - node.h / 2 - 22 - 16;
+        var right = node.x + node.w / 2 + 22;
+        var bottom = node.y + node.h / 2 + 22;
+        var nx = Math.min(box.x, left);
+        var ny = Math.min(box.y, top);
+        var nr = Math.max(box.x + box.w, right);
+        var nb = Math.max(box.y + box.h, bottom);
+        group.box = { x: nx, y: ny, w: nr - nx, h: nb - ny };
+    }
+
+    function groupBoxContains(box, x, y) {
+        return !!box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+    }
+
+    function startFlowGroupDrag(e, group, mode) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var box = ensureGroupBox(group);
+        var start = { x: box.x, y: box.y, w: box.w, h: box.h };
+        var members = flowNodes
+            .filter(function (node) { return node.group === group.id; })
+            .map(function (node) { return { node: node, x: node.x, y: node.y }; });
+        var p1 = flowCanvasPoint(e);
+        document.body.classList.add("dialog-dragging");
+        document.body.style.cursor = mode === "resize" ? "nwse-resize" : "move";
+
+        function onMove(ev) {
+            var p2 = flowCanvasPoint(ev);
+            var dx = p2.x - p1.x;
+            var dy = p2.y - p1.y;
+            if (mode === "resize") {
+                box.w = Math.max(150, Math.round(start.w + dx));
+                box.h = Math.max(100, Math.round(start.h + dy));
+            } else {
+                box.x = Math.round(start.x + dx);
+                box.y = Math.round(start.y + dy);
+                members.forEach(function (item) {
+                    item.node.x = item.x + Math.round(dx);
+                    item.node.y = item.y + Math.round(dy);
+                });
+            }
+            renderFlowGraph();
+        }
+
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.removeEventListener("pointercancel", onUp);
+            document.body.classList.remove("dialog-dragging");
+            document.body.style.cursor = "";
+            renderFlowGroups();
+            syncFlowSource();
+        }
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+    }
+
+    /* 在画布上绘制 subgraph 分组外框（可拖动、可拉伸） */
+    function renderFlowGroups() {
+        if (!mermaidGroupLayer) return;
+        mermaidGroupLayer.innerHTML = "";
+        flowGroups.forEach(function (group) {
+            var box = ensureGroupBox(group);
+            var rect = svgEl("rect");
+            rect.setAttribute("class", "fc-group-box" + flowToneClass(group.id));
+            rect.setAttribute("x", box.x);
+            rect.setAttribute("y", box.y);
+            rect.setAttribute("width", box.w);
+            rect.setAttribute("height", box.h);
+            rect.setAttribute("rx", 10);
+            rect.setAttribute("data-group-id", group.id);
+            rect.addEventListener("pointerdown", function (e) {
+                startFlowGroupDrag(e, group, "move");
+            });
+            mermaidGroupLayer.appendChild(rect);
+
+            var label = svgEl("text");
+            label.setAttribute("class", "fc-group-label" + flowToneClass(group.id));
+            label.setAttribute("x", box.x + 10);
+            label.setAttribute("y", box.y + 18);
+            label.textContent = group.label || group.id;
+            mermaidGroupLayer.appendChild(label);
+
+            var handle = svgEl("rect");
+            handle.setAttribute("class", "fc-group-resize" + flowToneClass(group.id));
+            handle.setAttribute("x", box.x + box.w - 15);
+            handle.setAttribute("y", box.y + box.h - 15);
+            handle.setAttribute("width", 12);
+            handle.setAttribute("height", 12);
+            handle.setAttribute("rx", 2);
+            handle.addEventListener("pointerdown", function (e) {
+                startFlowGroupDrag(e, group, "resize");
+            });
+            mermaidGroupLayer.appendChild(handle);
+        });
+    }
+
+    /* ===================== 时序图可视化编辑 ===================== */
+    var SEQ_STRUCTURAL = /^(loop|alt|else|opt|par|and|critical|option|break|rect|activate|deactivate|autonumber|box|end)\b/i;
+
+    function initDefaultSequence() {
+        seqParticipants = [{ id: "A", alias: "用户" }, { id: "B", alias: "系统" }];
+        seqMessages = [
+            { from: "A", to: "B", text: "请求", dashed: false },
+            { from: "B", to: "A", text: "响应", dashed: true }
+        ];
+        seqExtras = [];
+        seqParticipantSeq = 2;
+        seqSelected = null;
+        seqDrag = null;
+        seqLink = null;
+    }
+
+    function parseSequence(source) {
+        var lines = String(source || "").split(/\r?\n/);
+        var participants = [];
+        var seen = Object.create(null);
+        var messages = [];
+        var extras = [];
+        var sawDirective = false;
+
+        function ensureP(id, alias) {
+            if (!id) return;
+            if (!seen[id]) {
+                seen[id] = { id: id, alias: alias || id };
+                participants.push(seen[id]);
+            } else if (alias && seen[id].alias === id) {
+                seen[id].alias = alias;
+            }
+        }
+
+        for (var i = 0; i < lines.length; i++) {
+            var t = lines[i].trim();
+            if (!t) continue;
+            if (t.indexOf("%%") === 0) continue;
+            if (/^sequenceDiagram\b/i.test(t)) { sawDirective = true; continue; }
+            var p = /^(?:participant|actor)\s+([^\s]+)(?:\s+as\s+([\s\S]+))?$/i.exec(t);
+            if (p) { ensureP(p[1], p[2] ? p[2].trim() : p[1]); continue; }
+            var m = /^([^\s\-]+)\s*(-->>|->>|-->|->|--x|-x|--\)|-\))\s*([^:]+):\s*([\s\S]*)$/.exec(t);
+            if (m) {
+                var from = m[1].trim();
+                var arrow = m[2];
+                var to = m[3].trim();
+                ensureP(from);
+                ensureP(to);
+                messages.push({
+                    from: from, to: to, text: m[4].trim(),
+                    dashed: arrow.indexOf("--") === 0
+                });
+                continue;
+            }
+            if (/^note\b/i.test(t)) { extras.push(t); continue; }
+            if (SEQ_STRUCTURAL.test(t)) return null;   // 复杂结构，退回源码模式
+            extras.push(t);
+        }
+
+        if (!sawDirective) return null;
+        if (!participants.length) {
+            participants = [{ id: "A", alias: "A" }, { id: "B", alias: "B" }];
+        }
+        return { participants: participants, messages: messages, extras: extras };
+    }
+
+    function serializeSequence() {
+        var out = ["sequenceDiagram"];
+        seqParticipants.forEach(function (p) {
+            if (p.alias && p.alias !== p.id) out.push("  participant " + p.id + " as " + p.alias);
+            else out.push("  participant " + p.id);
+        });
+        seqMessages.forEach(function (m) {
+            out.push("  " + m.from + (m.dashed ? "-->>" : "->>") + m.to + ": " + (m.text || ""));
+        });
+        seqExtras.forEach(function (line) { out.push("  " + line); });
+        return out.join("\n") + "\n";
+    }
+
+    function seqParticipantById(id) {
+        for (var i = 0; i < seqParticipants.length; i++) {
+            if (seqParticipants[i].id === id) return seqParticipants[i];
+        }
+        return null;
+    }
+
+    /* ---------- 时序图画布：拖拽参与者 / 从竖线拖出消息 / 双击改文字 ---------- */
+    var SEQ_PART_H = 34;
+    var SEQ_TOP = 14;
+    var SEQ_ROW_TOP = 30;      // 第一条消息相对参与者底部的偏移
+    var SEQ_ROW_H = 52;
+    var SEQ_MIN_SLOT = 150;
+    var SEQ_PAD = 40;
+    var SEQ_SNAP = 34;
+    var seqSelected = null;    // { type: "participant" | "message", index }
+    var seqDrag = null;        // { index, liveX }
+    var seqLink = null;        // { from, curX, row, target, dashed }
+    var seqEdit = null;        // { input, commit }
+    var seqRepoint = null;     // { index, which, x }  拖动端点改指向时的实时位置
+    var seqGeo = null;
+    var SEQ_TONES = 8;         // 参与者配色数量（见 CSS .seq-tone-0..7）
+
+    /* 按参与者 id 稳定取色：重排后颜色不跳变 */
+    function seqToneOf(id) {
+        var text = String(id || "");
+        var hash = 0;
+        for (var i = 0; i < text.length; i++) {
+            hash = (hash * 31 + text.charCodeAt(i)) % 100003;
+        }
+        return hash % SEQ_TONES;
+    }
+
+    function seqToneClass(id) {
+        return " seq-tone-" + seqToneOf(id);
+    }
+
+    function seqTextWidth(text, fontPx) {
+        var width = 0;
+        String(text || "").split("").forEach(function (ch) {
+            width += /[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch) ? 1 : 0.56;
+        });
+        return Math.max(fontPx, width * fontPx);
+    }
+
+    function seqMeasure() {
+        var partW = 96;
+        seqParticipants.forEach(function (p) {
+            partW = Math.max(partW, Math.min(220, seqTextWidth(p.alias || p.id, 14) + 30));
+        });
+        var slot = SEQ_MIN_SLOT;
+        seqMessages.forEach(function (m) {
+            slot = Math.max(slot, seqTextWidth(m.text || "", 13) + 64);
+        });
+        var count = Math.max(1, seqParticipants.length);
+        var width = Math.max(420, SEQ_PAD * 2 + partW + slot * (count - 1));
+        var rows = Math.max(2, seqMessages.length);
+        var lastRowY = SEQ_TOP + SEQ_PART_H + SEQ_ROW_TOP + (rows - 1) * SEQ_ROW_H;
+        /* 底部再画一行参与者（与 Mermaid 预览的 mirrorActors 一致） */
+        var bottomY = lastRowY + 46;
+        var height = bottomY + SEQ_PART_H + 24;
+        return { partW: partW, slot: slot, width: width, height: height, bottomY: bottomY };
+    }
+
+    function seqSlotX(index, geo) {
+        var g = geo || seqGeo || seqMeasure();
+        return SEQ_PAD + g.partW / 2 + index * g.slot;
+    }
+
+    function seqLiveX(index) {
+        if (seqDrag && seqDrag.index === index) return seqDrag.liveX;
+        return seqSlotX(index);
+    }
+
+    function seqRowY(index) {
+        return SEQ_TOP + SEQ_PART_H + SEQ_ROW_TOP + index * SEQ_ROW_H;
+    }
+
+    function seqRowFromY(y) {
+        var base = SEQ_TOP + SEQ_PART_H + SEQ_ROW_TOP;
+        var row = Math.round((y - base) / SEQ_ROW_H);
+        return Math.max(0, Math.min(seqMessages.length, row));
+    }
+
+    function seqSvgNode(tag) {
+        return document.createElementNS("http://www.w3.org/2000/svg", tag);
+    }
+
+    function seqCanvasPoint(e) {
+        var svg = mermaidSeqPreview ? mermaidSeqPreview.querySelector("svg") : null;
+        if (!svg || !svg.getScreenCTM) return { x: 0, y: 0 };
+        var ctm = svg.getScreenCTM();
+        if (!ctm) return { x: 0, y: 0 };
+        var pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        var out = pt.matrixTransform(ctm.inverse());
+        return { x: out.x, y: out.y };
+    }
+
+    function updateSeqDeleteButton() {
+        if (!mermaidSeqDeleteBtn) return;
+        mermaidSeqDeleteBtn.disabled = !seqSelected;
+    }
+
+    function applySeqSelectionClasses() {
+        var svg = mermaidSeqPreview ? mermaidSeqPreview.querySelector("svg") : null;
+        if (!svg) return;
+        var sel = seqSelected;
+        svg.querySelectorAll("[data-seq-role]").forEach(function (node) {
+            var role = node.getAttribute("data-seq-role");
+            var index = parseInt(node.getAttribute("data-index"), 10);
+            var isHit = node.classList.contains("seq-message-hit");
+            var isVisibleMessage = role === "message" && !isHit;
+            var match = !!sel && index === sel.index &&
+                ((sel.type === "participant" && (role === "participant" || role === "lifeline")) ||
+                 (sel.type === "message" && (isVisibleMessage || role === "message-label")));
+            if (!isHit) node.classList.toggle("selected", match);
+            /* 只有可见的箭头本体才挂 marker；命中用的粗透明线绝不能挂，否则箭头会被线宽放大 */
+            if (isVisibleMessage) {
+                var sourceId = seqMessages[index] ? seqMessages[index].from : "";
+                node.setAttribute("marker-end",
+                    "url(#" + (match ? "seq-arrow-sel" : "seq-arrow-t" + seqToneOf(sourceId)) + ")");
+            } else if (role === "message") {
+                node.removeAttribute("marker-end");
+            }
+        });
+        /* 端点手柄随选中状态即时出现 / 消失（不整体重渲染，保证双击仍可用） */
+        svg.querySelectorAll(".seq-endpoint").forEach(function (handle) {
+            if (handle.parentNode) handle.parentNode.removeChild(handle);
+        });
+        if (sel && sel.type === "message" && seqMessages[sel.index]) {
+            var msg = seqMessages[sel.index];
+            var fromIndex = seqParticipantIndex(msg.from);
+            var toIndex = seqParticipantIndex(msg.to);
+            if (fromIndex >= 0 && toIndex >= 0) {
+                var hx1 = seqLiveX(fromIndex);
+                var hx2 = seqLiveX(toIndex);
+                appendSeqEndpoints(svg, sel.index, hx1, hx2, seqRowY(sel.index),
+                    Math.abs(hx2 - hx1) < 0.5);
+            }
+        }
+        updateSeqDeleteButton();
+    }
+
+    function selectSeqItem(type, index) {
+        seqSelected = type ? { type: type, index: index } : null;
+        applySeqSelectionClasses();
+    }
+
+    function renderSequenceEditor() {
+        if (!mermaidSeqPreview) return;
+        var geo = seqMeasure();
+        seqGeo = geo;
+        var W = geo.width, H = geo.height;
+        mermaidSeqPreview.innerHTML = "";
+        var svg = seqSvgNode("svg");
+        svg.setAttribute("class", "seq-canvas");
+        svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+        svg.setAttribute("width", W);
+        svg.setAttribute("height", H);
+
+        var defs = seqSvgNode("defs");
+        var markerIds = [];
+        for (var tone = 0; tone < SEQ_TONES; tone++) {
+            markerIds.push(["seq-arrow-t" + tone, "seq-marker seq-tone-" + tone]);
+        }
+        markerIds.push(["seq-arrow-sel", "seq-marker seq-marker-sel"]);
+        markerIds.forEach(function (item) {
+            var marker = seqSvgNode("marker");
+            marker.setAttribute("id", item[0]);
+            marker.setAttribute("class", item[1]);
+            marker.setAttribute("viewBox", "0 0 10 10");
+            marker.setAttribute("refX", "9.5");
+            marker.setAttribute("refY", "5");
+            marker.setAttribute("markerWidth", "9");
+            marker.setAttribute("markerHeight", "9");
+            marker.setAttribute("markerUnits", "userSpaceOnUse");
+            marker.setAttribute("orient", "auto");
+            var head = seqSvgNode("path");
+            head.setAttribute("d", "M0,0 L10,5 L0,10 z");
+            head.setAttribute("class", "seq-marker-head");
+            marker.appendChild(head);
+            defs.appendChild(marker);
+        });
+        svg.appendChild(defs);
+
+        /* 参与者方框 + 生命线（竖线） */
+        seqParticipants.forEach(function (p, index) {
+            var cx = seqLiveX(index);
+            var isSel = !!seqSelected && seqSelected.type === "participant" && seqSelected.index === index;
+
+            var line = seqSvgNode("line");
+            line.setAttribute("class", "seq-lifeline" + seqToneClass(p.id) + (isSel ? " selected" : ""));
+            line.setAttribute("x1", cx);
+            line.setAttribute("x2", cx);
+            line.setAttribute("y1", SEQ_TOP + SEQ_PART_H);
+            line.setAttribute("y2", geo.bottomY);
+            svg.appendChild(line);
+
+            var hit = seqSvgNode("rect");
+            hit.setAttribute("class", "seq-lifeline-hit");
+            hit.setAttribute("x", cx - 7);
+            hit.setAttribute("y", SEQ_TOP + SEQ_PART_H);
+            hit.setAttribute("width", 14);
+            hit.setAttribute("height", Math.max(10, geo.bottomY - SEQ_TOP - SEQ_PART_H));
+            hit.setAttribute("data-seq-role", "lifeline");
+            hit.setAttribute("data-index", index);
+            svg.appendChild(hit);
+
+            var box = seqSvgNode("rect");
+            box.setAttribute("class", "seq-participant" + seqToneClass(p.id) + (isSel ? " selected" : ""));
+            box.setAttribute("x", cx - geo.partW / 2);
+            box.setAttribute("y", SEQ_TOP);
+            box.setAttribute("width", geo.partW);
+            box.setAttribute("height", SEQ_PART_H);
+            box.setAttribute("rx", 5);
+            box.setAttribute("data-seq-role", "participant");
+            box.setAttribute("data-index", index);
+            svg.appendChild(box);
+
+            var label = seqSvgNode("text");
+            label.setAttribute("class", "seq-participant-label" + seqToneClass(p.id) + (isSel ? " selected" : ""));
+            label.setAttribute("x", cx);
+            label.setAttribute("y", SEQ_TOP + SEQ_PART_H / 2);
+            label.setAttribute("dominant-baseline", "middle");
+            label.setAttribute("data-seq-role", "participant");
+            label.setAttribute("data-index", index);
+            label.textContent = p.alias || p.id;
+            svg.appendChild(label);
+        });
+
+        /* 消息箭头 */
+        seqMessages.forEach(function (m, index) {
+            var fromIndex = seqParticipantIndex(m.from);
+            var toIndex = seqParticipantIndex(m.to);
+            if (fromIndex < 0 || toIndex < 0) return;
+            var x1 = seqLiveX(fromIndex);
+            var x2 = seqLiveX(toIndex);
+            /* 拖动端点改指向时，端点跟随鼠标自由移动（不做跳跃吸附） */
+            if (seqRepoint && seqRepoint.index === index) {
+                if (seqRepoint.which === "from") x1 = seqRepoint.x;
+                else x2 = seqRepoint.x;
+            }
+            var y = seqRowY(index);
+            var isSel = !!seqSelected && seqSelected.type === "message" && seqSelected.index === index;
+            /* 约定：向右实线、向左虚线；拖动端点时实时按当前方向切换 */
+            var dashed = m.dashed;
+            if (seqDrag || (seqRepoint && seqRepoint.index === index)) dashed = x2 < x1 - 0.5;
+            var tone = seqToneOf(m.from);
+            var msgClass = "seq-message seq-tone-" + tone +
+                (dashed ? " dashed" : "") + (isSel ? " selected" : "");
+            var marker = "url(#" + (isSel ? "seq-arrow-sel" : "seq-arrow-t" + tone) + ")";
+
+            if (Math.abs(x2 - x1) < 0.5) {
+                /* 自调用：从竖线右侧绕出去再回到竖线 */
+                var loopD = seqSelfLoopPath(x1, y, 46, 26);
+                var loop = seqSvgNode("path");
+                loop.setAttribute("class", msgClass + " self");
+                loop.setAttribute("d", loopD);
+                loop.setAttribute("marker-end", marker);
+                loop.setAttribute("data-seq-role", "message");
+                loop.setAttribute("data-index", index);
+                svg.appendChild(loop);
+
+                var loopHit = seqSvgNode("path");
+                loopHit.setAttribute("class", "seq-message-hit");
+                loopHit.setAttribute("d", loopD);
+                loopHit.setAttribute("data-seq-role", "message");
+                loopHit.setAttribute("data-index", index);
+                svg.appendChild(loopHit);
+
+                var loopText = seqSvgNode("text");
+                loopText.setAttribute("class",
+                    "seq-message-label seq-tone-" + tone + (isSel ? " selected" : ""));
+                loopText.setAttribute("x", x1 + 56);
+                loopText.setAttribute("y", y + 4);
+                loopText.setAttribute("text-anchor", "start");
+                loopText.setAttribute("data-seq-role", "message-label");
+                loopText.setAttribute("data-index", index);
+                loopText.textContent = m.text || "";
+                svg.appendChild(loopText);
+                if (isSel) {
+                    appendSeqEndpoints(svg, index, x1, x1, y, true);
+                }
+                return;
+            }
+
+            var line = seqSvgNode("line");
+            line.setAttribute("class", msgClass);
+            line.setAttribute("x1", x1);
+            line.setAttribute("y1", y);
+            line.setAttribute("x2", x2);
+            line.setAttribute("y2", y);
+            line.setAttribute("marker-end", marker);
+            line.setAttribute("data-seq-role", "message");
+            line.setAttribute("data-index", index);
+            svg.appendChild(line);
+
+            var hit = seqSvgNode("line");
+            hit.setAttribute("class", "seq-message-hit");
+            hit.setAttribute("x1", x1);
+            hit.setAttribute("y1", y);
+            hit.setAttribute("x2", x2);
+            hit.setAttribute("y2", y);
+            hit.setAttribute("data-seq-role", "message");
+            hit.setAttribute("data-index", index);
+            svg.appendChild(hit);
+
+            var text = seqSvgNode("text");
+            text.setAttribute("class", "seq-message-label seq-tone-" + tone + (isSel ? " selected" : ""));
+            text.setAttribute("x", (x1 + x2) / 2);
+            text.setAttribute("y", y - 9);
+            text.setAttribute("data-seq-role", "message-label");
+            text.setAttribute("data-index", index);
+            text.textContent = m.text || "";
+            svg.appendChild(text);
+            if (isSel) appendSeqEndpoints(svg, index, x1, x2, y, false);
+        });
+
+        /* 底部镜像参与者（与 Mermaid 预览的上下两行一致） */
+        seqParticipants.forEach(function (p, index) {
+            var cx = seqLiveX(index);
+            var isSel = !!seqSelected && seqSelected.type === "participant" && seqSelected.index === index;
+
+            var box = seqSvgNode("rect");
+            box.setAttribute("class", "seq-participant mirror" + seqToneClass(p.id) + (isSel ? " selected" : ""));
+            box.setAttribute("x", cx - geo.partW / 2);
+            box.setAttribute("y", geo.bottomY);
+            box.setAttribute("width", geo.partW);
+            box.setAttribute("height", SEQ_PART_H);
+            box.setAttribute("rx", 5);
+            box.setAttribute("data-seq-role", "participant");
+            box.setAttribute("data-index", index);
+            svg.appendChild(box);
+
+            var mirrorLabel = seqSvgNode("text");
+            mirrorLabel.setAttribute("class", "seq-participant-label mirror" + seqToneClass(p.id) + (isSel ? " selected" : ""));
+            mirrorLabel.setAttribute("x", cx);
+            mirrorLabel.setAttribute("y", geo.bottomY + SEQ_PART_H / 2);
+            mirrorLabel.setAttribute("dominant-baseline", "middle");
+            mirrorLabel.setAttribute("data-seq-role", "participant");
+            mirrorLabel.setAttribute("data-index", index);
+            mirrorLabel.textContent = p.alias || p.id;
+            svg.appendChild(mirrorLabel);
+        });
+
+        /* 正在拖出的消息箭头 */
+        if (seqLink) {
+            var fromX = seqLiveX(seqLink.from);
+            var rowY = seqRowY(seqLink.row);
+            var guide = seqSvgNode("line");
+            guide.setAttribute("class", "seq-row-guide");
+            guide.setAttribute("x1", 0);
+            guide.setAttribute("y1", rowY);
+            guide.setAttribute("x2", W);
+            guide.setAttribute("y2", rowY);
+            svg.appendChild(guide);
+
+            var temp = seqSvgNode("line");
+            if (seqLink.target === seqLink.from) {
+                temp = seqSvgNode("path");
+                temp.setAttribute("class", "seq-message temp self" + (seqLink.dashed ? " dashed" : ""));
+                temp.setAttribute("d", seqSelfLoopPath(fromX, rowY, 46, 26));
+            } else {
+                temp.setAttribute("class", "seq-message temp" + (seqLink.dashed ? " dashed" : ""));
+                temp.setAttribute("x1", fromX);
+                temp.setAttribute("y1", rowY);
+                temp.setAttribute("x2", seqLink.curX);
+                temp.setAttribute("y2", rowY);
+            }
+            temp.setAttribute("marker-end", "url(#seq-arrow-sel)");
+            svg.appendChild(temp);
+        }
+
+        mermaidSeqPreview.appendChild(svg);
+        applySeqZoom();
+        updateSeqDeleteButton();
+    }
+
+    function seqParticipantIndex(id) {
+        for (var i = 0; i < seqParticipants.length; i++) {
+            if (seqParticipants[i].id === id) return i;
+        }
+        return -1;
+    }
+
+    /* 自调用回环：从竖线右侧绕出去再折回竖线 */
+    function seqSelfLoopPath(x, y, w, h) {
+        return "M " + (x + 1) + " " + (y - h / 2) +
+            " H " + (x + w) +
+            " V " + (y + h / 2) +
+            " H " + (x + 1);
+    }
+
+    /* 选中消息时在两端显示可拖拽手柄，拖到别的竖线即可改指向 */
+    function appendSeqEndpoints(svg, index, x1, x2, y, isSelf) {
+        var points = isSelf
+            ? [{ x: x1 + 1, y: y - 13, end: "from" }, { x: x1 + 1, y: y + 13, end: "to" }]
+            : [{ x: x1, y: y, end: "from" }, { x: x2, y: y, end: "to" }];
+        points.forEach(function (pt) {
+            var handle = seqSvgNode("circle");
+            handle.setAttribute("class", "seq-endpoint");
+            handle.setAttribute("cx", pt.x);
+            handle.setAttribute("cy", pt.y);
+            handle.setAttribute("r", 5);
+            handle.setAttribute("data-seq-role", "msg-end");
+            handle.setAttribute("data-seq-end", pt.end);
+            handle.setAttribute("data-index", index);
+            svg.appendChild(handle);
+        });
+    }
+
+    function startSeqParticipantDrag(e, index) {
+        if (!seqParticipants[index]) return;
+        e.preventDefault();
+        e.stopPropagation();
+        commitSeqEdit();
+        selectSeqItem("participant", index);
+        var svg = mermaidSeqPreview.querySelector("svg");
+        var scale = svg && svg.getScreenCTM() ? (svg.getScreenCTM().a || 1) : 1;
+        var startClientX = e.clientX;
+        var geo = seqGeo || seqMeasure();
+        var baseX = seqSlotX(index, geo);
+        var minX = 10;
+        var maxX = Math.max(minX, geo.width - 10);
+        seqDrag = { index: index, liveX: baseX };
+        renderSequenceEditor();
+
+        function onMove(ev) {
+            if (!seqDrag) return;
+            var nx = baseX + (ev.clientX - startClientX) / (scale || 1);
+            seqDrag.liveX = Math.max(minX, Math.min(maxX, nx));
+            renderSequenceEditor();
+        }
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            if (!seqDrag) return;
+            var liveX = seqDrag.liveX;
+            var dragged = seqParticipants[index];
+            seqDrag = null;
+            if (!dragged) { updateSequencePreview(); return; }
+            /* 按松开位置插入新次序：越过邻居即交换，序列化顺序与预览保持一致 */
+            var rest = seqParticipants.filter(function (p, i) { return i !== index; });
+            var insertAt = 0;
+            seqParticipants.forEach(function (p, i) {
+                if (i === index) return;
+                if (seqSlotX(i, geo) < liveX) insertAt++;
+            });
+            rest.splice(Math.max(0, Math.min(rest.length, insertAt)), 0, dragged);
+            seqParticipants = rest;
+            /* 顺序变了，按新方向重算实线 / 虚线（向右实线、向左虚线） */
+            seqMessages.forEach(function (msg) {
+                var f = seqParticipantIndex(msg.from);
+                var t = seqParticipantIndex(msg.to);
+                if (f >= 0 && t >= 0) msg.dashed = f !== t && t < f;
+            });
+            var newIndex = seqParticipants.indexOf(dragged);
+            seqSelected = newIndex >= 0 ? { type: "participant", index: newIndex } : null;
+            updateSequencePreview();
+            if (mermaidEditorHint) {
+                mermaidEditorHint.textContent = newIndex >= 0
+                    ? "参与者顺序已更新：" + seqParticipants.map(function (p) { return p.alias || p.id; }).join(" → ")
+                    : "";
+            }
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    function startSeqLinkDrag(e, index) {
+        if (!seqParticipants[index]) return;
+        e.preventDefault();
+        e.stopPropagation();
+        commitSeqEdit();
+        var startX = seqSlotX(index);
+        var pt = seqCanvasPoint(e);
+        seqLink = {
+            from: index,
+            curX: pt.x,
+            row: seqRowFromY(pt.y),
+            target: null,
+            dashed: false,
+            leftSource: false
+        };
+        if (mermaidEditorHint) {
+            mermaidEditorHint.textContent =
+                "拖到其他竖线上松开即可创建消息（向右实线、向左虚线）；先向外拖出再回到这条竖线，才会生成指向自己的箭头";
+        }
+        renderSequenceEditor();
+
+        function updateFromPointer(ev) {
+            if (!seqLink) return;
+            var p = seqCanvasPoint(ev);
+            seqLink.row = seqRowFromY(p.y);
+            /* 必须先离开起始竖线（超过吸附半径），再回来才会吸附到自身 */
+            if (Math.abs(p.x - startX) > SEQ_SNAP) seqLink.leftSource = true;
+            var nearest = -1;
+            var bestDist = SEQ_SNAP;
+            seqParticipants.forEach(function (item, i) {
+                if (i === seqLink.from && !seqLink.leftSource) return;
+                var dist = Math.abs(seqSlotX(i) - p.x);
+                if (dist <= bestDist) { bestDist = dist; nearest = i; }
+            });
+            seqLink.target = nearest >= 0 ? nearest : null;
+            seqLink.curX = nearest >= 0 ? seqSlotX(nearest) : p.x;
+            seqLink.dashed = seqLink.curX < startX;
+            renderSequenceEditor();
+        }
+        function onMove(ev) { updateFromPointer(ev); }
+        function onUp(ev) {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            if (!seqLink) return;
+            updateFromPointer(ev);
+            var link = seqLink;
+            seqLink = null;
+            if (link.target === null) {
+                renderSequenceEditor();
+                if (mermaidEditorHint) {
+                    mermaidEditorHint.textContent =
+                        "已取消：拖到其他竖线上松开可创建消息；先向外拖出再回到这条竖线，即可创建指向自己的箭头";
+                }
+                return;
+            }
+            var fromP = seqParticipants[link.from];
+            var toP = seqParticipants[link.target];
+            if (!fromP || !toP) { renderSequenceEditor(); return; }
+            var message = {
+                from: fromP.id,
+                to: toP.id,
+                text: "消息",
+                dashed: link.dashed
+            };
+            var row = Math.max(0, Math.min(seqMessages.length, link.row));
+            seqMessages.splice(row, 0, message);
+            seqSelected = { type: "message", index: row };
+            updateSequencePreview();
+            if (mermaidEditorHint) {
+                mermaidEditorHint.textContent = "已创建消息，直接输入文字后回车即可（Esc 取消）";
+            }
+            startSeqMessageEdit(row, true);
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    /* 拖动消息本体上下移动，其他消息自动让位 */
+    function startSeqMessageDrag(e, index) {
+        if (!seqMessages[index]) return;
+        selectSeqItem("message", index);
+        var startY = e.clientY;
+        var current = index;
+        var moved = false;
+        function onMove(ev) {
+            if (!moved) {
+                if (Math.abs(ev.clientY - startY) < 6) return;
+                moved = true;
+            }
+            var p = seqCanvasPoint(ev);
+            var target = seqRowFromY(p.y);
+            target = Math.max(0, Math.min(seqMessages.length - 1, target));
+            if (target === current) return;
+            var msg = seqMessages.splice(current, 1)[0];
+            seqMessages.splice(target, 0, msg);
+            current = target;
+            seqSelected = { type: "message", index: current };
+            updateSequencePreview();
+            if (mermaidEditorHint) {
+                mermaidEditorHint.textContent = "消息已移动到第 " + (current + 1) + " 行";
+            }
+        }
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            if (moved) updateSequencePreview();
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    /* 拖动消息端点改写指向：拖动时端点跟随鼠标，松开时吸附到最近竖线 */
+    function startSeqRepoint(e, index, which) {
+        var message = seqMessages[index];
+        if (!message) return;
+        e.preventDefault();
+        e.stopPropagation();
+        commitSeqEdit();
+        selectSeqItem("message", index);
+        var fromIndex = seqParticipantIndex(message.from);
+        var toIndex = seqParticipantIndex(message.to);
+        var startX = which === "from" ? seqLiveX(fromIndex) : seqLiveX(toIndex);
+        seqRepoint = { index: index, which: which, x: startX };
+        renderSequenceEditor();
+        var snap = Math.max(60, SEQ_SNAP * 1.8);
+        if (mermaidEditorHint) {
+            mermaidEditorHint.textContent = which === "from"
+                ? "拖动起点：端点跟随鼠标移动，松开时吸附到最近的竖线"
+                : "拖动终点：端点跟随鼠标移动，松开时吸附到最近的竖线（拖到同一条竖线则成为自调用）";
+        }
+        function onMove(ev) {
+            if (!seqRepoint) return;
+            var p = seqCanvasPoint(ev);
+            seqRepoint.x = p.x;
+            renderSequenceEditor();
+        }
+        function onUp(ev) {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            if (!seqRepoint) return;
+            var p = seqCanvasPoint(ev);
+            var nearest = -1;
+            var bestDist = snap;
+            seqParticipants.forEach(function (item, i) {
+                var dist = Math.abs(seqSlotX(i) - p.x);
+                if (dist <= bestDist) { bestDist = dist; nearest = i; }
+            });
+            seqRepoint = null;
+            if (nearest >= 0) {
+                var id = seqParticipants[nearest].id;
+                if (which === "from") message.from = id;
+                else message.to = id;
+                /* 方向变了就同步线型：向右实线、向左虚线、自调用实线 */
+                var fromIdx = seqParticipantIndex(message.from);
+                var toIdx = seqParticipantIndex(message.to);
+                if (fromIdx >= 0 && toIdx >= 0) {
+                    message.dashed = fromIdx !== toIdx && toIdx < fromIdx;
+                }
+            }
+            updateSequencePreview();
+            if (!mermaidEditorHint) return;
+            if (nearest < 0) {
+                mermaidEditorHint.textContent = "未吸附到竖线，已还原原指向";
+                return;
+            }
+            if (message.from === message.to) {
+                mermaidEditorHint.textContent = "已改为自调用箭头（起止同一条竖线）";
+                return;
+            }
+            var fromP = seqParticipantById(message.from);
+            var toP = seqParticipantById(message.to);
+            mermaidEditorHint.textContent = "已更新消息指向：" +
+                ((fromP && fromP.alias) || message.from) + " → " +
+                ((toP && toP.alias) || message.to) +
+                (message.dashed ? "（向左 · 虚线）" : "（向右 · 实线）");
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    /* 预览区用：把解析后的时序图渲染成与编辑器同色系的静态 SVG（不再用 Mermaid 的单调配色） */
+    function buildSequencePreviewSvg(parsed) {
+        var participants = (parsed && parsed.participants) || [];
+        var messages = (parsed && parsed.messages) || [];
+        if (!participants.length) return null;
+        var partW = 96;
+        participants.forEach(function (p) {
+            partW = Math.max(partW, Math.min(220, seqTextWidth(p.alias || p.id, 14) + 30));
+        });
+        var slot = SEQ_MIN_SLOT;
+        messages.forEach(function (m) {
+            slot = Math.max(slot, seqTextWidth(m.text || "", 13) + 64);
+        });
+        var count = participants.length;
+        var width = Math.max(360, SEQ_PAD * 2 + partW + slot * (count - 1));
+        var rows = Math.max(1, messages.length);
+        var firstRow = SEQ_TOP + SEQ_PART_H + SEQ_ROW_TOP;
+        var bottomY = firstRow + (rows - 1) * SEQ_ROW_H + 46;
+        var height = bottomY + SEQ_PART_H + 20;
+        var xOf = function (index) { return SEQ_PAD + partW / 2 + index * slot; };
+        var idxOf = function (id) {
+            for (var i = 0; i < participants.length; i++) {
+                if (participants[i].id === id) return i;
+            }
+            return -1;
+        };
+
+        var svg = seqSvgNode("svg");
+        svg.setAttribute("class", "seq-canvas seq-preview-canvas");
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+        svg.setAttribute("width", "100%");
+        svg.style.maxWidth = width + "px";
+        svg.style.height = "auto";
+
+        var defs = seqSvgNode("defs");
+        for (var tone = 0; tone < SEQ_TONES; tone++) {
+            var marker = seqSvgNode("marker");
+            marker.setAttribute("id", "seq-arrow-t" + tone);
+            marker.setAttribute("class", "seq-marker seq-tone-" + tone);
+            marker.setAttribute("viewBox", "0 0 10 10");
+            marker.setAttribute("refX", "9.5");
+            marker.setAttribute("refY", "5");
+            marker.setAttribute("markerWidth", "9");
+            marker.setAttribute("markerHeight", "9");
+            marker.setAttribute("markerUnits", "userSpaceOnUse");
+            marker.setAttribute("orient", "auto");
+            var head = seqSvgNode("path");
+            head.setAttribute("d", "M0,0 L10,5 L0,10 z");
+            head.setAttribute("class", "seq-marker-head");
+            marker.appendChild(head);
+            defs.appendChild(marker);
+        }
+        svg.appendChild(defs);
+
+        participants.forEach(function (p, index) {
+            var cx = xOf(index);
+            var line = seqSvgNode("line");
+            line.setAttribute("class", "seq-lifeline" + seqToneClass(p.id));
+            line.setAttribute("x1", cx);
+            line.setAttribute("y1", SEQ_TOP + SEQ_PART_H);
+            line.setAttribute("x2", cx);
+            line.setAttribute("y2", bottomY);
+            svg.appendChild(line);
+            [SEQ_TOP, bottomY].forEach(function (top) {
+                var box = seqSvgNode("rect");
+                box.setAttribute("class", "seq-participant" + seqToneClass(p.id));
+                box.setAttribute("x", cx - partW / 2);
+                box.setAttribute("y", top);
+                box.setAttribute("width", partW);
+                box.setAttribute("height", SEQ_PART_H);
+                box.setAttribute("rx", 5);
+                svg.appendChild(box);
+                var label = seqSvgNode("text");
+                label.setAttribute("class", "seq-participant-label" + seqToneClass(p.id));
+                label.setAttribute("x", cx);
+                label.setAttribute("y", top + SEQ_PART_H / 2);
+                label.setAttribute("dominant-baseline", "middle");
+                label.textContent = p.alias || p.id;
+                svg.appendChild(label);
+            });
+        });
+
+        messages.forEach(function (m, index) {
+            var fromIndex = idxOf(m.from);
+            var toIndex = idxOf(m.to);
+            if (fromIndex < 0 || toIndex < 0) return;
+            var x1 = xOf(fromIndex);
+            var x2 = xOf(toIndex);
+            var y = firstRow + index * SEQ_ROW_H;
+            var tone = seqToneOf(m.from);
+            var cls = "seq-message seq-tone-" + tone + (m.dashed ? " dashed" : "");
+            var markerUrl = "url(#seq-arrow-t" + tone + ")";
+            if (Math.abs(x2 - x1) < 0.5) {
+                var loop = seqSvgNode("path");
+                loop.setAttribute("class", cls + " self");
+                loop.setAttribute("d", seqSelfLoopPath(x1, y, 46, 26));
+                loop.setAttribute("marker-end", markerUrl);
+                svg.appendChild(loop);
+                var loopText = seqSvgNode("text");
+                loopText.setAttribute("class", "seq-message-label seq-tone-" + tone);
+                loopText.setAttribute("x", x1 + 56);
+                loopText.setAttribute("y", y + 4);
+                loopText.setAttribute("text-anchor", "start");
+                loopText.textContent = m.text || "";
+                svg.appendChild(loopText);
+                return;
+            }
+            var lineEl = seqSvgNode("line");
+            lineEl.setAttribute("class", cls);
+            lineEl.setAttribute("x1", x1);
+            lineEl.setAttribute("y1", y);
+            lineEl.setAttribute("x2", x2);
+            lineEl.setAttribute("y2", y);
+            lineEl.setAttribute("marker-end", markerUrl);
+            svg.appendChild(lineEl);
+            var text = seqSvgNode("text");
+            text.setAttribute("class", "seq-message-label seq-tone-" + tone);
+            text.setAttribute("x", (x1 + x2) / 2);
+            text.setAttribute("y", y - 9);
+            text.textContent = m.text || "";
+            svg.appendChild(text);
+        });
+        return svg;
+    }
+
+    /* 画布内联编辑：双击消息文字 / 双击参与者改名 */
+    function startSeqEdit(kind, index, initial, anchorEl, commit) {
+        commitSeqEdit();
+        if (!anchorEl || !mermaidSeqPreview) return;
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "seq-inline-input";
+        input.value = initial || "";
+        input.spellcheck = false;
+        var hostRect = mermaidSeqPreview.getBoundingClientRect();
+        var rect = anchorEl.getBoundingClientRect();
+        input.style.left = Math.round(rect.left - hostRect.left + mermaidSeqPreview.scrollLeft - 14) + "px";
+        input.style.top = Math.round(rect.top - hostRect.top + mermaidSeqPreview.scrollTop - 8) + "px";
+        input.style.width = Math.max(96, Math.round(rect.width + 34)) + "px";
+        mermaidSeqPreview.appendChild(input);
+        seqEdit = { input: input, commit: commit, kind: kind, index: index };
+        input.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape") {
+                ev.preventDefault();
+                ev.stopPropagation();
+                cancelSeqEdit();
+            } else if (ev.key === "Enter") {
+                ev.preventDefault();
+                ev.stopPropagation();
+                commitSeqEdit();
+            }
+        });
+        input.addEventListener("blur", function () { commitSeqEdit(); });
+        input.focus();
+        input.select();
+    }
+
+    function startSeqMessageEdit(index, autoSelect) {
+        var message = seqMessages[index];
+        if (!message) return;
+        var label = mermaidSeqPreview.querySelector(
+            '.seq-message-label[data-index="' + index + '"]');
+        if (!label) return;
+        selectSeqItem("message", index);
+        startSeqEdit("message", index, message.text || "", label, function (value) {
+            if (!seqMessages[index]) return;
+            seqMessages[index].text = String(value || "").trim();
+            updateSequencePreview();
+        });
+        if (autoSelect) {
+            var input = seqEdit && seqEdit.input;
+            if (input) input.select();
+        }
+    }
+
+    function startSeqParticipantRename(index) {
+        var p = seqParticipants[index];
+        if (!p) return;
+        var label = mermaidSeqPreview.querySelector(
+            '.seq-participant-label[data-index="' + index + '"]');
+        if (!label) return;
+        startSeqEdit("participant", index, p.alias || p.id, label, function (value) {
+            if (!seqParticipants[index]) return;
+            var name = String(value || "").trim();
+            seqParticipants[index].alias = name || seqParticipants[index].id;
+            updateSequencePreview();
+        });
+    }
+
+    function commitSeqEdit() {
+        if (!seqEdit) return;
+        var edit = seqEdit;
+        seqEdit = null;
+        var value = edit.input.value;
+        if (edit.input.parentNode) edit.input.parentNode.removeChild(edit.input);
+        edit.commit(value);
+    }
+
+    function cancelSeqEdit() {
+        if (!seqEdit) return;
+        var edit = seqEdit;
+        seqEdit = null;
+        if (edit.input.parentNode) edit.input.parentNode.removeChild(edit.input);
+        applySeqSelectionClasses();
+    }
+
+    function deleteSeqSelection() {
+        if (!seqSelected) return;
+        if (seqSelected.type === "message") {
+            seqMessages.splice(seqSelected.index, 1);
+        } else {
+            var p = seqParticipants[seqSelected.index];
+            if (!p) return;
+            if (seqParticipants.length <= 1) {
+                if (mermaidEditorHint) mermaidEditorHint.textContent = "至少保留一个参与者";
+                return;
+            }
+            seqParticipants.splice(seqSelected.index, 1);
+            seqMessages = seqMessages.filter(function (m) { return m.from !== p.id && m.to !== p.id; });
+        }
+        seqSelected = null;
+        updateSequencePreview();
+        if (mermaidEditorHint) mermaidEditorHint.textContent = "已删除选中项";
+    }
+
+    function addSequenceParticipant() {
+        seqParticipantSeq++;
+        var id = "P" + seqParticipantSeq;
+        while (seqParticipantById(id)) { seqParticipantSeq++; id = "P" + seqParticipantSeq; }
+        var n = seqParticipants.length + 1;
+        seqParticipants.push({ id: id, alias: "参与者" + n });
+        seqSelected = { type: "participant", index: seqParticipants.length - 1 };
+        updateSequencePreview();
+        if (mermaidEditorHint) mermaidEditorHint.textContent = "已添加参与者「" + seqParticipants[n - 1].alias + "」";
+    }
+
+    if (mermaidSeqPreview) {
+        mermaidSeqPreview.addEventListener("pointerdown", function (e) {
+            if (!mermaidEditorOpen() || !mermaidSeqPane || mermaidSeqPane.hidden) return;
+            if (e.button !== undefined && e.button !== 0) return;
+            var target = e.target;
+            if (target && target.classList && target.classList.contains("seq-inline-input")) return;
+            var role = target && target.getAttribute ? target.getAttribute("data-seq-role") : null;
+            var index = target && target.getAttribute
+                ? parseInt(target.getAttribute("data-index"), 10) : NaN;
+            if (role === "participant" && !isNaN(index)) { startSeqParticipantDrag(e, index); return; }
+            if (role === "lifeline" && !isNaN(index)) { startSeqLinkDrag(e, index); return; }
+            if (role === "msg-end" && !isNaN(index)) {
+                startSeqRepoint(e, index, target.getAttribute("data-seq-end") || "to");
+                return;
+            }
+            if ((role === "message" || role === "message-label") && !isNaN(index)) {
+                startSeqMessageDrag(e, index);
+                return;
+            }
+            commitSeqEdit();
+            selectSeqItem(null, -1);
+        });
+        mermaidSeqPreview.addEventListener("dblclick", function (e) {
+            if (!mermaidEditorOpen() || !mermaidSeqPane || mermaidSeqPane.hidden) return;
+            var target = e.target;
+            var role = target && target.getAttribute ? target.getAttribute("data-seq-role") : null;
+            var index = target && target.getAttribute
+                ? parseInt(target.getAttribute("data-index"), 10) : NaN;
+            if (isNaN(index)) return;
+            e.preventDefault();
+            if (role === "message-label" || role === "message") startSeqMessageEdit(index, false);
+            else if (role === "participant") startSeqParticipantRename(index);
+        });
+        mermaidSeqPreview.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    }
+
+
+    function renderMermaidInto(target, source) {
+        if (!window.mermaid || !target) return;
+        try {
+            window.mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: mermaidThemeName()
+            });
+        } catch (e) { /* 初始化失败时仍尝试渲染 */ }
+        var seq = ++mermaidPreviewSeq;
+        try {
+            var result = window.mermaid.render("mermaid-seq-preview-" + seq, source);
+            Promise.resolve(result).then(function (res) {
+                if (seq !== mermaidPreviewSeq) return;
+                var svg = typeof res === "string" ? res : (res && res.svg);
+                target.innerHTML = svg || "";
+                if (target === mermaidSeqPreview) applySeqZoom();
+            }).catch(function (err) {
+                if (seq !== mermaidPreviewSeq) return;
+                target.innerHTML = '<div class="mermaid-error">' +
+                    escapeHtml(String(err && err.message || err)) + "</div>";
+            });
+        } catch (err) {
+            target.innerHTML = '<div class="mermaid-error">' +
+                escapeHtml(String(err && err.message || err)) + "</div>";
+        }
+    }
+
+    function updateSequencePreview() {
+        if (!mermaidSeqPreview) return;
+        mermaidSource.value = serializeSequence();
+        renderSequenceEditor();
     }
 
     function syncFlowSource() {
@@ -1071,6 +2791,29 @@
         return { x: node.x + dx * scale, y: node.y + dy * scale };
     }
 
+    /* 方向感知的三次贝塞尔走线，接近 Mermaid 预览的平滑曲线 */
+    function flowEdgeCurve(a, p1, b, p2) {
+        var dx = p2.x - p1.x;
+        var dy = p2.y - p1.y;
+        var vertical = Math.abs(dy) > Math.abs(dx);
+        var c1x = p1.x, c1y = p1.y, c2x = p2.x, c2y = p2.y;
+        if (vertical) {
+            var ky = dy * 0.48;
+            c1y = p1.y + ky;
+            c2y = p2.y - ky;
+        } else {
+            var kx = dx * 0.48;
+            c1x = p1.x + kx;
+            c2x = p2.x - kx;
+        }
+        return {
+            d: "M " + p1.x + " " + p1.y +
+                " C " + c1x + " " + c1y + ", " + c2x + " " + c2y + ", " + p2.x + " " + p2.y,
+            midX: (p1.x + 3 * c1x + 3 * c2x + p2.x) / 8,
+            midY: (p1.y + 3 * c1y + 3 * c2y + p2.y) / 8
+        };
+    }
+
     function renderFlowEdges() {
         mermaidEdgeLayer.innerHTML = "";
         flowEdges.forEach(function (edge) {
@@ -1081,12 +2824,19 @@
             var dy = b.y - a.y;
             var p1 = flowBorderPoint(a, dx, dy);
             var p2 = flowBorderPoint(b, -dx, -dy);
+            var curve = flowEdgeCurve(a, p1, b, p2);
             var path = svgEl("path");
-            path.setAttribute("class", "fc-edge" +
+            path.setAttribute("class", "fc-edge" + flowToneClass(edge.from) +
                 (flowSelected && flowSelected.type === "edge" && flowSelected.id === edge.id
                     ? " selected" : ""));
             path.setAttribute("data-edge-id", edge.id);
-            path.setAttribute("d", "M " + p1.x + " " + p1.y + " L " + p2.x + " " + p2.y);
+            path.setAttribute("d", curve.d);
+            var arrowUrl = "url(#" + (
+                flowSelected && flowSelected.type === "edge" && flowSelected.id === edge.id
+                    ? "mermaid-arrow-sel"
+                    : "mermaid-arrow-t" + flowToneIndex(edge.from)) + ")";
+            path.setAttribute("marker-end", arrowUrl);
+            if (edge.bidir) path.setAttribute("marker-start", arrowUrl);
             path.addEventListener("click", function (e) {
                 e.stopPropagation();
                 selectFlowEdge(edge.id);
@@ -1096,8 +2846,8 @@
             if (edge.label) {
                 var text = svgEl("text");
                 text.setAttribute("class", "fc-edge-label");
-                text.setAttribute("x", (p1.x + p2.x) / 2);
-                text.setAttribute("y", (p1.y + p2.y) / 2 - 6);
+                text.setAttribute("x", curve.midX);
+                text.setAttribute("y", curve.midY - 6);
                 text.textContent = edge.label;
                 mermaidEdgeLayer.appendChild(text);
             }
@@ -1107,7 +2857,7 @@
 
     function renderFlowNode(node) {
         var g = svgEl("g");
-        g.setAttribute("class", "fc-node" +
+        g.setAttribute("class", "fc-node" + flowToneClass(node.id) +
             (flowSelected && flowSelected.type === "node" && flowSelected.id === node.id
                 ? " selected" : ""));
         g.setAttribute("data-node-id", node.id);
@@ -1153,11 +2903,11 @@
         text.setAttribute("y", 0);
         text.setAttribute("dominant-baseline", "middle");
         var lines = flowDisplayLines(node.label);
-        var start = -((lines.length - 1) * 16) / 2;
+        var start = -((lines.length - 1) * FLOW_LINE_H) / 2;
         lines.forEach(function (line, i) {
             var tspan = svgEl("tspan");
             tspan.setAttribute("x", 0);
-            tspan.setAttribute("y", start + i * 16);
+            tspan.setAttribute("y", start + i * FLOW_LINE_H);
             tspan.textContent = line;
             text.appendChild(tspan);
         });
@@ -1188,10 +2938,68 @@
     }
 
     function renderFlowGraph() {
+        flowEnsureMarkers();
+        renderFlowGroups();
         renderFlowEdges();
         mermaidNodeLayer.innerHTML = "";
         flowNodes.forEach(renderFlowNode);
         refreshFlowSelection();
+    }
+
+    /* 流程图配色：按 id 稳定取色（与预览区的后处理一致） */
+    var FLOW_TONE_COUNT = 8;
+
+    function flowToneIndex(id) {
+        var text = String(id || "");
+        var hash = 0;
+        for (var i = 0; i < text.length; i++) {
+            hash = (hash * 31 + text.charCodeAt(i)) % 100003;
+        }
+        return hash % FLOW_TONE_COUNT;
+    }
+
+    function flowToneClass(id) {
+        return " fc-tone-" + flowToneIndex(id);
+    }
+
+    function flowEnsureMarkers() {
+        if (!mermaidCanvas) return;
+        var defs = mermaidCanvas.querySelector("defs");
+        if (!defs) return;
+        for (var tone = 0; tone < FLOW_TONE_COUNT; tone++) {
+            var id = "mermaid-arrow-t" + tone;
+            if (defs.querySelector('marker[id="' + id + '"]')) continue;
+            var marker = svgEl("marker");
+            marker.setAttribute("id", id);
+            marker.setAttribute("class", "fc-marker fc-tone-" + tone);
+            marker.setAttribute("viewBox", "0 0 10 10");
+            marker.setAttribute("refX", "9");
+            marker.setAttribute("refY", "5");
+            marker.setAttribute("markerWidth", "6");
+            marker.setAttribute("markerHeight", "6");
+            marker.setAttribute("markerUnits", "userSpaceOnUse");
+            marker.setAttribute("orient", "auto-start-reverse");
+            var head = svgEl("path");
+            head.setAttribute("d", "M0,0 L10,5 L0,10 z");
+            marker.appendChild(head);
+            defs.appendChild(marker);
+        }
+        if (!defs.querySelector('marker[id="mermaid-arrow-sel"]')) {
+            var selMarker = svgEl("marker");
+            selMarker.setAttribute("id", "mermaid-arrow-sel");
+            selMarker.setAttribute("class", "fc-marker-sel");
+            selMarker.setAttribute("viewBox", "0 0 10 10");
+            selMarker.setAttribute("refX", "9");
+            selMarker.setAttribute("refY", "5");
+            selMarker.setAttribute("markerWidth", "6");
+            selMarker.setAttribute("markerHeight", "6");
+            selMarker.setAttribute("markerUnits", "userSpaceOnUse");
+            selMarker.setAttribute("orient", "auto-start-reverse");
+            var selHead = svgEl("path");
+            selHead.setAttribute("d", "M0,0 L10,5 L0,10 z");
+            selMarker.appendChild(selHead);
+            defs.appendChild(selMarker);
+        }
     }
 
     function refreshFlowSelection() {
@@ -1210,23 +3018,85 @@
         }
     }
 
+    function flowGroupById(id) {
+        if (!id) return null;
+        for (var i = 0; i < flowGroups.length; i++) {
+            if (flowGroups[i].id === id) return flowGroups[i];
+        }
+        return null;
+    }
+
+    function rebuildFlowGroupMembers() {
+        flowGroups.forEach(function (group) {
+            group.members = flowNodes
+                .filter(function (node) { return node.group === group.id; })
+                .map(function (node) { return node.id; });
+        });
+    }
+
+    function hideFlowGroupFields() {
+        if (mermaidGroupField) mermaidGroupField.hidden = true;
+        if (mermaidGroupRenameField) mermaidGroupRenameField.hidden = true;
+        if (mermaidGroupMake) mermaidGroupMake.hidden = true;
+        if (mermaidGroupActions) mermaidGroupActions.hidden = true;
+    }
+
+    function refreshFlowGroupFields(node) {
+        if (!mermaidGroupField || !mermaidGroupSelect) return;
+        mermaidGroupField.hidden = false;
+        mermaidGroupSelect.innerHTML = "";
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = "（不属于分组）";
+        mermaidGroupSelect.appendChild(none);
+        flowGroups.forEach(function (group) {
+            var opt = document.createElement("option");
+            opt.value = group.id;
+            opt.textContent = group.label || group.id;
+            mermaidGroupSelect.appendChild(opt);
+        });
+        mermaidGroupSelect.value = node.group || "";
+
+        if (mermaidGroupMake) mermaidGroupMake.hidden = false;
+        if (mermaidGroupName) mermaidGroupName.value = "";
+
+        var group = flowGroupById(node.group);
+        if (mermaidGroupRenameField) mermaidGroupRenameField.hidden = !group;
+        if (group && mermaidGroupRename) mermaidGroupRename.value = group.label || group.id;
+        if (mermaidGroupActions) mermaidGroupActions.hidden = !group;
+    }
+
+    function setNodeGroup(node, groupId) {
+        if (!node) return;
+        node.group = groupId || "";
+        var group = flowGroupById(node.group);
+        if (group) expandGroupBoxToNode(group, node);
+        rebuildFlowGroupMembers();
+        renderFlowGraph();
+        syncFlowSource();
+        showFlowProps();
+    }
+
     function showFlowProps() {
         if (!mermaidProps || !flowSelected) {
             if (mermaidProps) mermaidProps.hidden = true;
+            hideFlowGroupFields();
             return;
         }
         if (flowSelected.type === "node") {
             var node = flowNodeById(flowSelected.id);
-            if (!node) { mermaidProps.hidden = true; return; }
+            if (!node) { mermaidProps.hidden = true; hideFlowGroupFields(); return; }
             mermaidPropsTitle.textContent = "节点属性";
             mermaidShapeField.hidden = false;
             mermaidLabelInput.value = node.label;
             mermaidShapeSelect.value = node.shape;
+            refreshFlowGroupFields(node);
         } else {
             var edge = flowEdgeById(flowSelected.id);
-            if (!edge) { mermaidProps.hidden = true; return; }
+            if (!edge) { mermaidProps.hidden = true; hideFlowGroupFields(); return; }
             mermaidPropsTitle.textContent = "连线属性";
             mermaidShapeField.hidden = true;
+            hideFlowGroupFields();
             mermaidLabelInput.value = edge.label || "";
         }
         mermaidProps.hidden = false;
@@ -1256,6 +3126,300 @@
         point.y = e.clientY;
         return point.matrixTransform(mermaidCanvas.getScreenCTM().inverse());
     }
+
+    /* ---------- 流程图画布：无边界视口（滚轮缩放 + 右键平移） ---------- */
+    var FLOW_CANVAS_W = 1200;
+    var FLOW_CANVAS_H = 800;
+    var FLOW_ZOOM_MIN = 0.4;
+    var FLOW_ZOOM_MAX = 4;
+    var flowView = { x: 0, y: 0, w: FLOW_CANVAS_W, h: FLOW_CANVAS_H };
+
+    function flowCanvasAspect() {
+        if (!mermaidCanvas) return FLOW_CANVAS_W / FLOW_CANVAS_H;
+        var rect = mermaidCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return FLOW_CANVAS_W / FLOW_CANVAS_H;
+        return rect.width / rect.height;
+    }
+
+    function applyFlowView() {
+        if (mermaidCanvas) {
+            mermaidCanvas.setAttribute("viewBox",
+                flowView.x + " " + flowView.y + " " + flowView.w + " " + flowView.h);
+        }
+        updateFlowZoomLabel();
+    }
+
+    /* 窗口尺寸变化后重新对齐视口宽高比，保证编辑区与预览一致、无留白 */
+    function ensureFlowAspect() {
+        var aspect = flowCanvasAspect();
+        if (!aspect || !isFinite(aspect)) return;
+        var current = flowView.w / flowView.h;
+        if (Math.abs(current - aspect) / aspect <= 0.02) return;
+        var cx = flowView.x + flowView.w / 2;
+        var cy = flowView.y + flowView.h / 2;
+        var h = flowView.h;
+        var w = h * aspect;
+        flowView = { x: cx - w / 2, y: cy - h / 2, w: w, h: h };
+        applyFlowView();
+    }
+
+    /* 把节点内容居中显示（保持当前缩放） */
+    function fitFlowViewToCenter() {
+        if (!flowNodes.length) return;
+        ensureFlowAspect();
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        flowNodes.forEach(function (node) {
+            minX = Math.min(minX, node.x - node.w / 2);
+            maxX = Math.max(maxX, node.x + node.w / 2);
+            minY = Math.min(minY, node.y - node.h / 2);
+            maxY = Math.max(maxY, node.y + node.h / 2);
+        });
+        flowView.x = (minX + maxX) / 2 - flowView.w / 2;
+        flowView.y = (minY + maxY) / 2 - flowView.h / 2;
+        applyFlowView();
+    }
+
+    /* 按内容自动缩放并居中，打开编辑器时与预览的构图一致 */
+    function fitFlowViewToContent() {
+        if (!flowNodes.length) return;
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        flowNodes.forEach(function (node) {
+            minX = Math.min(minX, node.x - node.w / 2);
+            maxX = Math.max(maxX, node.x + node.w / 2);
+            minY = Math.min(minY, node.y - node.h / 2);
+            maxY = Math.max(maxY, node.y + node.h / 2);
+        });
+        var pad = 40;
+        var contentW = Math.max(120, (maxX - minX) + pad * 2);
+        var contentH = Math.max(120, (maxY - minY) + pad * 2);
+        var aspect = flowCanvasAspect();
+        var zoom;
+        if (contentW / contentH < aspect) {
+            zoom = FLOW_CANVAS_H / contentH;
+        } else {
+            zoom = (FLOW_CANVAS_H * aspect) / contentW;
+        }
+        zoom = Math.max(FLOW_ZOOM_MIN, Math.min(1.3, zoom));
+        var h = FLOW_CANVAS_H / zoom;
+        var w = h * aspect;
+        flowZoom = zoom;
+        flowView = {
+            x: (minX + maxX) / 2 - w / 2,
+            y: (minY + maxY) / 2 - h / 2,
+            w: w,
+            h: h
+        };
+        applyFlowView();
+    }
+
+    function updateFlowZoomLabel() {
+        if (mermaidZoomLabel) mermaidZoomLabel.textContent = Math.round(flowZoom * 100) + "%";
+    }
+
+    function setFlowZoom(next, anchor) {
+        next = Math.max(FLOW_ZOOM_MIN, Math.min(FLOW_ZOOM_MAX, next));
+        /* 视口宽高比始终跟随画布元素，避免出现留白（编辑所见即预览所得） */
+        var aspect = flowCanvasAspect();
+        var h1 = FLOW_CANVAS_H / next;
+        var w1 = h1 * aspect;
+        var nx, ny;
+        if (anchor) {
+            var fx = (anchor.x - flowView.x) / flowView.w;
+            var fy = (anchor.y - flowView.y) / flowView.h;
+            nx = anchor.x - fx * w1;
+            ny = anchor.y - fy * h1;
+        } else {
+            nx = flowView.x + flowView.w / 2 - w1 / 2;
+            ny = flowView.y + flowView.h / 2 - h1 / 2;
+        }
+        flowZoom = next;
+        flowView = { x: nx, y: ny, w: w1, h: h1 };
+        applyFlowView();
+    }
+
+    function resetFlowZoom() {
+        flowZoom = 1;
+        var aspect = flowCanvasAspect();
+        var h = FLOW_CANVAS_H;
+        var w = h * aspect;
+        flowView = { x: FLOW_CANVAS_W / 2 - w / 2, y: 0, w: w, h: h };
+        applyFlowView();
+    }
+
+    function mermaidEditorOpen() {
+        return !!(mermaidEditor && !mermaidEditor.hidden);
+    }
+
+    function onFlowCanvasWheel(e) {
+        if (!mermaidEditorOpen()) return;
+        e.preventDefault();
+        var step = e.deltaY;
+        if (!step) return;
+        ensureFlowAspect();
+        var factor = Math.pow(1.0016, -step);
+        factor = Math.max(0.82, Math.min(1.22, factor));
+        var anchor = flowCanvasPoint(e);
+        setFlowZoom(flowZoom * factor, { x: anchor.x, y: anchor.y });
+    }
+
+    if (mermaidCanvasWrap) {
+        mermaidCanvasWrap.addEventListener("wheel", onFlowCanvasWheel, { passive: false });
+    }
+    if (mermaidZoomIn) {
+        mermaidZoomIn.addEventListener("click", function () { setFlowZoom(flowZoom * 1.2, null); });
+    }
+    if (mermaidZoomOut) {
+        mermaidZoomOut.addEventListener("click", function () { setFlowZoom(flowZoom / 1.2, null); });
+    }
+    if (mermaidZoomReset) {
+        mermaidZoomReset.addEventListener("click", resetFlowZoom);
+    }
+
+    /* 右键（或中键）拖动平移流程图画布 */
+    function startFlowPan(e) {
+        if (!mermaidEditorOpen()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        ensureFlowAspect();
+        var scale = 1;
+        try {
+            scale = mermaidCanvas.getScreenCTM().a || 1;
+        } catch (err) { scale = 1; }
+        var startX = e.clientX, startY = e.clientY;
+        var base = { x: flowView.x, y: flowView.y };
+        document.body.classList.add("canvas-panning");
+        function onMove(ev) {
+            flowView.x = base.x - (ev.clientX - startX) / scale;
+            flowView.y = base.y - (ev.clientY - startY) / scale;
+            applyFlowView();
+        }
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.body.classList.remove("canvas-panning");
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    if (mermaidCanvas) {
+        mermaidCanvas.addEventListener("pointerdown", function (e) {
+            if (e.button !== 1 && e.button !== 2) return;
+            startFlowPan(e);
+        });
+        mermaidCanvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    }
+    if (mermaidCanvasWrap) {
+        mermaidCanvasWrap.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    }
+
+    /* ---------- 时序图预览缩放 ---------- */
+    function applySeqZoom() {
+        if (!mermaidSeqPreview) return;
+        var svg = mermaidSeqPreview.querySelector("svg");
+        if (svg) {
+            var base = parseFloat(svg.getAttribute("data-base-width") || "0");
+            if (!base) {
+                var vbWidth = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal.width : 0;
+                if (!vbWidth) {
+                    var mw = /max-width:\s*([\d.]+)px/i.exec(svg.getAttribute("style") || "");
+                    vbWidth = mw ? parseFloat(mw[1]) : (svg.getBoundingClientRect().width || 600);
+                }
+                base = Math.max(160, Math.round(vbWidth || 600));
+                svg.setAttribute("data-base-width", String(base));
+            }
+            svg.style.maxWidth = "none";
+            svg.style.width = Math.round(base * seqZoom) + "px";
+            svg.style.height = "auto";
+        }
+        if (seqZoomLabel) seqZoomLabel.textContent = Math.round(seqZoom * 100) + "%";
+    }
+
+    function setSeqZoom(next) {
+        seqZoom = Math.max(0.4, Math.min(3, next));
+        applySeqZoom();
+    }
+
+    if (mermaidSeqCanvasWrap) {
+        mermaidSeqCanvasWrap.addEventListener("wheel", function (e) {
+            if (!mermaidEditorOpen() || !mermaidSeqPane || mermaidSeqPane.hidden) return;
+            e.preventDefault();
+            var factor = Math.max(0.85, Math.min(1.18, Math.pow(1.0016, -e.deltaY)));
+            setSeqZoom(seqZoom * factor);
+        }, { passive: false });
+    }
+    if (seqZoomIn) seqZoomIn.addEventListener("click", function () { setSeqZoom(seqZoom * 1.2); });
+    if (seqZoomOut) seqZoomOut.addEventListener("click", function () { setSeqZoom(seqZoom / 1.2); });
+    if (seqZoomReset) seqZoomReset.addEventListener("click", function () { setSeqZoom(1); });
+
+    /* ---------- UI 原型画布缩放（CSS zoom，保持滚动锚点） ---------- */
+    function applyUiZoom() {
+        if (uiCanvas) uiCanvas.style.zoom = uiZoom;
+        if (uiZoomLabel) uiZoomLabel.textContent = Math.round(uiZoom * 100) + "%";
+    }
+
+    function setUiZoom(next, anchorClient) {
+        next = Math.max(0.4, Math.min(2.5, next));
+        if (Math.abs(next - uiZoom) < 0.001) return;
+        var prev = uiZoom;
+        var wrap = uiCanvasWrap;
+        var ax = 0, ay = 0, rect = null;
+        if (wrap && anchorClient) {
+            rect = wrap.getBoundingClientRect();
+            ax = anchorClient.x - rect.left + wrap.scrollLeft;
+            ay = anchorClient.y - rect.top + wrap.scrollTop;
+        }
+        uiZoom = next;
+        applyUiZoom();
+        if (wrap && anchorClient && rect) {
+            wrap.scrollLeft = ax * (uiZoom / prev) - (anchorClient.x - rect.left);
+            wrap.scrollTop = ay * (uiZoom / prev) - (anchorClient.y - rect.top);
+        }
+    }
+
+    if (uiCanvasWrap) {
+        uiCanvasWrap.addEventListener("wheel", function (e) {
+            if (!uiEditor || uiEditor.hidden) return;
+            e.preventDefault();
+            var factor = Math.max(0.85, Math.min(1.18, Math.pow(1.0016, -e.deltaY)));
+            setUiZoom(uiZoom * factor, { x: e.clientX, y: e.clientY });
+        }, { passive: false });
+    }
+    if (uiZoomIn) uiZoomIn.addEventListener("click", function () { setUiZoom(uiZoom * 1.2, null); });
+    if (uiZoomOut) uiZoomOut.addEventListener("click", function () { setUiZoom(uiZoom / 1.2, null); });
+    if (uiZoomReset) uiZoomReset.addEventListener("click", function () { setUiZoom(1, null); });
+
+    /* ---------- 右键 / 中键拖动平移可滚动画布（时序图预览、UI 原型画布） ---------- */
+    function bindScrollPan(wrap, isActive) {
+        if (!wrap) return;
+        wrap.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+        wrap.addEventListener("pointerdown", function (e) {
+            if (e.button !== 1 && e.button !== 2) return;
+            if (isActive && !isActive()) return;
+            e.preventDefault();
+            var startX = e.clientX, startY = e.clientY;
+            var baseLeft = wrap.scrollLeft, baseTop = wrap.scrollTop;
+            document.body.classList.add("canvas-panning");
+            function onMove(ev) {
+                wrap.scrollLeft = baseLeft - (ev.clientX - startX);
+                wrap.scrollTop = baseTop - (ev.clientY - startY);
+            }
+            function onUp() {
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+                document.body.classList.remove("canvas-panning");
+            }
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+        });
+    }
+
+    bindScrollPan(mermaidSeqPreview, function () {
+        return mermaidEditorOpen() && mermaidSeqPane && !mermaidSeqPane.hidden;
+    });
+    bindScrollPan(uiCanvasWrap, function () {
+        return !!(uiEditor && !uiEditor.hidden);
+    });
 
     function flowNodeElement(id) {
         var nodes = mermaidNodeLayer.querySelectorAll(".fc-node");
@@ -1288,10 +3452,9 @@
         function onMove(ev) {
             if (!flowDrag) return;
             var p = flowCanvasPoint(ev);
-            var halfW = node.w / 2 + 6;
-            var halfH = node.h / 2 + 6;
-            node.x = Math.max(halfW, Math.min(1200 - halfW, p.x + flowDrag.offsetX));
-            node.y = Math.max(halfH, Math.min(800 - halfH, p.y + flowDrag.offsetY));
+            /* 无边界画布：不再把节点限制在 1200×800 范围内 */
+            node.x = Math.round(p.x + flowDrag.offsetX);
+            node.y = Math.round(p.y + flowDrag.offsetY);
             group.setAttribute("transform", "translate(" + node.x + " " + node.y + ")");
             renderFlowEdges();
             flowDrag.moved = true;
@@ -1300,8 +3463,24 @@
         function onUp() {
             document.removeEventListener("pointermove", onMove);
             document.removeEventListener("pointerup", onUp);
-            if (flowDrag && flowDrag.moved) syncFlowSource();
+            var moved = !!(flowDrag && flowDrag.moved);
             flowDrag = null;
+            if (!moved) return;
+            /* 拖拽落点若落在某个分组框内，则自动加入该分组；落在框外则移出分组 */
+            var target = null;
+            for (var i = 0; i < flowGroups.length; i++) {
+                var box = flowGroups[i].box;
+                if (groupBoxContains(box, node.x, node.y)) target = flowGroups[i];
+            }
+            var nextGroup = target ? target.id : "";
+            if (nextGroup !== (node.group || "")) {
+                node.group = nextGroup;
+                if (target) expandGroupBoxToNode(target, node);
+                rebuildFlowGroupMembers();
+                renderFlowGraph();
+                showFlowProps();
+            }
+            syncFlowSource();
         }
 
         document.addEventListener("pointermove", onMove);
@@ -1367,7 +3546,14 @@
         var x = 500;
         var y = 90 + (index % 6) * 110;
         if (index >= 6) x = 720;
+        // 若当前选中的节点属于某个分组，新节点默认加入同一分组
+        var selectedNode = (flowSelected && flowSelected.type === "node")
+            ? flowNodeById(flowSelected.id) : null;
         var node = addFlowNodeRaw(label, shape, x, y);
+        if (selectedNode && selectedNode.group && flowGroupById(selectedNode.group)) {
+            node.group = selectedNode.group;
+            rebuildFlowGroupMembers();
+        }
         flowSelected = { type: "node", id: node.id };
         renderFlowGraph();
         showFlowProps();
@@ -1378,29 +3564,60 @@
         layoutFlowNodes(false);
         renderFlowGraph();
         syncFlowSource();
+        fitFlowViewToContent();
     }
 
     function setMermaidTab(mode, skipParse) {
         if (mode === "visual" && !skipParse) {
-            if (!importFlowGraph(mermaidSource.value)) {
+            var src = mermaidSource.value;
+            if (/^\s*sequenceDiagram\b/i.test(src)) {
+                var parsedSeq = parseSequence(src);
+                if (parsedSeq) {
+                    seqParticipants = parsedSeq.participants;
+                    seqMessages = parsedSeq.messages;
+                    seqExtras = parsedSeq.extras;
+                    seqSelected = null;
+                    seqDrag = null;
+                    seqLink = null;
+                    mermaidMode = "sequence";
+                } else {
+                    mermaidMode = "sequence";
+                    mermaidEditorHint.textContent =
+                        "该时序图包含 loop / alt 等复杂结构，请在源码模式编辑";
+                    mode = "source";
+                }
+            } else if (!importFlowGraph(src)) {
+                mermaidMode = "flow";
                 mermaidEditorHint.textContent =
-                    "当前源码包含图形编辑器暂不支持的语法（如 subgraph/样式），请继续使用源码模式";
+                    "当前源码包含图形编辑器暂不支持的语法，请继续使用源码模式";
                 mode = "source";
+            } else {
+                mermaidMode = "flow";
             }
         }
         if (mode === "source" && mermaidTab === "visual" && !skipParse) {
-            syncFlowSource();
+            if (mermaidMode === "sequence") mermaidSource.value = serializeSequence();
+            else syncFlowSource();
         }
         mermaidTab = mode;
-        mermaidVisualPane.hidden = mode !== "visual";
-        mermaidSourcePane.hidden = mode !== "source";
-        mermaidTabVisual.classList.toggle("active", mode === "visual");
-        mermaidTabSource.classList.toggle("active", mode === "source");
+        if (mermaidVisualPane) mermaidVisualPane.hidden = !(mode === "visual" && mermaidMode === "flow");
+        if (mermaidSeqPane) mermaidSeqPane.hidden = !(mode === "visual" && mermaidMode === "sequence");
+        if (mermaidSourcePane) mermaidSourcePane.hidden = mode !== "source";
+        if (mermaidTabVisual) mermaidTabVisual.classList.toggle("active", mode === "visual");
+        if (mermaidTabSource) mermaidTabSource.classList.toggle("active", mode === "source");
         if (mode === "visual") {
-            if (flowDirection) mermaidDirection.value = flowDirection;
-            renderFlowGraph();
-            showFlowProps();
-            mermaidEditorHint.textContent = "拖动节点移动；从节点边缘圆点拖到另一个节点连线；Ctrl+Enter 应用 · Esc 取消";
+            if (mermaidMode === "sequence") {
+                renderSequenceEditor();
+                updateSequencePreview();
+                mermaidEditorHint.textContent =
+                    "拖动参与者左右移动；在竖线上按住拖动创建消息；双击消息文字编辑 · Ctrl+Enter 应用";
+            } else {
+                if (flowDirection) mermaidDirection.value = flowDirection;
+                renderFlowGraph();
+                showFlowProps();
+                mermaidEditorHint.textContent =
+                    "拖动节点移动；从节点边缘圆点拖到另一个节点连线；Ctrl+Enter 应用 · Esc 取消";
+            }
         } else {
             updateMermaidPreview();
             mermaidEditorHint.textContent = "源码模式：Ctrl+Enter 应用 · Esc 取消";
@@ -1476,7 +3693,10 @@
 
     function applyMermaidEditor() {
         if (mermaidApplying) return;
-        if (mermaidTab === "visual") syncFlowSource();
+        if (mermaidTab === "visual") {
+            if (mermaidMode === "sequence") mermaidSource.value = serializeSequence();
+            else syncFlowSource();
+        }
         var source = mermaidSource.value.trim();
         if (!source) {
             postMessage({ type: "status", text: "Mermaid 源码不能为空" });
@@ -1545,6 +3765,17 @@
             syncFlowSource();
         });
 
+        if (mermaidSeqAddParticipant) {
+            mermaidSeqAddParticipant.addEventListener("click", function () {
+                addSequenceParticipant();
+            });
+        }
+        if (mermaidSeqDeleteBtn) {
+            mermaidSeqDeleteBtn.addEventListener("click", function () {
+                deleteSeqSelection();
+            });
+        }
+
         mermaidCanvas.addEventListener("pointerdown", function (e) {
             if (e.target === mermaidCanvas || e.target === mermaidNodeLayer ||
                 e.target === mermaidEdgeLayer) {
@@ -1586,24 +3817,94 @@
             syncFlowSource();
         });
 
+        if (mermaidGroupSelect) {
+            mermaidGroupSelect.addEventListener("change", function () {
+                if (!flowSelected || flowSelected.type !== "node") return;
+                var node = flowNodeById(flowSelected.id);
+                if (node) setNodeGroup(node, mermaidGroupSelect.value);
+            });
+        }
+        if (mermaidGroupAdd) {
+            mermaidGroupAdd.addEventListener("click", function () {
+                if (!flowSelected || flowSelected.type !== "node") return;
+                var node = flowNodeById(flowSelected.id);
+                if (!node) return;
+                var label = ((mermaidGroupName && mermaidGroupName.value) || "").trim();
+                var n = flowGroups.length + 1;
+                var id = "g" + n;
+                while (flowGroupById(id)) { n++; id = "g" + n; }
+                if (!label) label = "分组" + n;
+                flowGroups.push({ id: id, label: label, members: [] });
+                setNodeGroup(node, id);
+                mermaidEditorHint.textContent = "已新建分组「" + label + "」并加入当前节点";
+            });
+        }
+        if (mermaidGroupRemove) {
+            mermaidGroupRemove.addEventListener("click", function () {
+                if (!flowSelected || flowSelected.type !== "node") return;
+                var node = flowNodeById(flowSelected.id);
+                if (node) setNodeGroup(node, "");
+            });
+        }
+        if (mermaidGroupDelete) {
+            mermaidGroupDelete.addEventListener("click", function () {
+                if (!flowSelected || flowSelected.type !== "node") return;
+                var node = flowNodeById(flowSelected.id);
+                if (!node || !node.group) return;
+                var gid = node.group;
+                flowGroups = flowGroups.filter(function (group) { return group.id !== gid; });
+                flowNodes.forEach(function (item) {
+                    if (item.group === gid) item.group = "";
+                });
+                renderFlowGraph();
+                syncFlowSource();
+                showFlowProps();
+                mermaidEditorHint.textContent = "已删除分组，组内节点已移出";
+            });
+        }
+        if (mermaidGroupRename) {
+            mermaidGroupRename.addEventListener("input", function () {
+                if (!flowSelected || flowSelected.type !== "node") return;
+                var node = flowNodeById(flowSelected.id);
+                var group = node ? flowGroupById(node.group) : null;
+                if (!group) return;
+                group.label = mermaidGroupRename.value || group.id;
+                renderFlowGraph();
+                syncFlowSource();
+            });
+        }
+
         mermaidDeleteSelection.addEventListener("click", deleteFlowSelection);
 
         mermaidEditor.addEventListener("keydown", function (e) {
             if (e.key === "Escape") {
+                if (seqEdit) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelSeqEdit();
+                    return;
+                }
                 e.preventDefault();
                 e.stopPropagation();
                 closeMermaidEditor();
             } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                 e.preventDefault();
                 e.stopPropagation();
+                commitSeqEdit();
                 applyMermaidEditor();
             } else if ((e.key === "Delete" || e.key === "Backspace") &&
-                mermaidTab === "visual" && flowSelected) {
+                mermaidTab === "visual") {
                 var tag = e.target && e.target.tagName;
                 if (tag !== "INPUT" && tag !== "SELECT" && tag !== "TEXTAREA") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    deleteFlowSelection();
+                    if (mermaidMode === "sequence" && seqSelected) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteSeqSelection();
+                    } else if (flowSelected) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteFlowSelection();
+                    }
                 }
             }
         });
@@ -2514,6 +4815,17 @@
         var top = Number(page.y) || 0;
         var explicit = left !== 0 || top !== 0;
         var parent = page.parentId ? uiFindPage(ctx.doc, page.parentId) : null;
+        if (parent && page.kind === "dialog") {
+            // 对话框始终浮在所属窗口上方，与画布里的并排布局无关
+            var ownerPos = uiRuntimePagePosition(parent, index, ctx);
+            var overlay = {
+                left: Math.max(0, ownerPos.left + 72),
+                top: Math.max(0, ownerPos.top + 64),
+                z: 100 + index
+            };
+            ctx.positions[page.id] = overlay;
+            return overlay;
+        }
         if (!explicit) {
             if (parent) {
                 var parentPos = ctx.positions[parent.id] || { left: Math.max(24, Number(parent.x) || 0), top: Math.max(24, Number(parent.y) || 0) };
@@ -4348,7 +6660,9 @@
     }
 
     function uiCanvasNode(id) {
-        return id ? uiCanvas.querySelector('.ui-canvas-el[data-id="' + id + '"]') : null;
+        if (!id || !uiCanvas) return null;
+        var scope = (uiMode === "canvas" && uiLayout) ? (uiFrameNode(uiLayout.id) || uiCanvas) : uiCanvas;
+        return scope.querySelector('.ui-canvas-el[data-id="' + id + '"]');
     }
 
     function uiCurrentPage() {
@@ -4452,49 +6766,72 @@
         var page = uiFindPage(uiDoc, pageId);
         if (!page) return;
         uiLayout = page;
+        uiSelectedPageId = page.id;
         uiSelectedId = null;
         uiConnectFrom = null;
+        if (uiMode === "preview") {
+            uiMode = "canvas";
+            if (uiModeCanvasBtn) uiModeCanvasBtn.classList.add("active");
+            if (uiModePreviewBtn) uiModePreviewBtn.classList.remove("active");
+        }
         uiRenderEditor();
-        uiEditorHint.textContent = "当前页面：" + page.name + "（" + (UI_PAGE_KINDS[page.kind] || "窗口") + "）";
+        uiScrollFrameIntoView(page.id);
+        uiEditorHint.textContent = "当前窗口：" + page.name + "（" + (UI_PAGE_KINDS[page.kind] || "窗口") + "）";
     }
 
     function uiRenderStructure() {
-        if (!uiStructure || !uiLayout) return;
+        if (!uiStructure || !uiDoc) return;
         uiStructure.innerHTML = "";
-        var root = document.createElement("div");
-        root.className = "ui-structure-root";
-        root.textContent = "▣ " + (uiLayout.name || "页面");
-        root.addEventListener("click", function () { uiSelectElement(null); });
-        uiStructure.appendChild(root);
-        var renderLevel = function (parentId, depth) {
-            uiLayout.elements.filter(function (el) { return (el.parentId || "") === parentId; })
-                .forEach(function (el) {
-                    var row = document.createElement("div");
-                    row.className = "ui-structure-item" + (el.id === uiSelectedId ? " active" : "") +
-                        (uiIsContainerType(el.type) ? " container" : "");
-                    row.style.paddingLeft = (8 + depth * 12) + "px";
-                    row.innerHTML = '<span class="ui-structure-icon">' + escapeHtml(UI_TYPE_ICONS[el.type] || "•") +
-                        '</span><span class="ui-structure-label">' +
-                        escapeHtml(el.text || UI_TYPE_LABELS[el.type]) + "</span>";
-                    row.title = UI_TYPE_LABELS[el.type] + " · " + el.id;
-                    row.tabIndex = 0;
-                    row.setAttribute("role", "button");
-                    row.addEventListener("keydown", function (e) {
-                        if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            uiSelectElement(el.id);
+        uiDoc.pages.forEach(function (page) {
+            var group = document.createElement("div");
+            group.className = "ui-structure-group" +
+                (uiLayout && page.id === uiLayout.id ? " active" : "");
+            group.innerHTML = '<span class="ui-structure-icon">' +
+                (page.kind === "dialog" ? "◈" : "▣") + "</span>" +
+                '<span class="ui-structure-label">' + escapeHtml(page.name || page.id) + "</span>" +
+                '<span class="ui-structure-kind">' +
+                escapeHtml(UI_PAGE_KINDS[page.kind] || "窗口") + "</span>";
+            group.title = "窗口：" + (page.name || page.id) +
+                (page.open ? " · 初始打开" : "") +
+                (uiDoc.start === page.id ? " · 启动页" : "");
+            group.tabIndex = 0;
+            group.addEventListener("click", function () {
+                uiSelectPage(page.id);
+                uiScrollFrameIntoView(page.id);
+            });
+            uiStructure.appendChild(group);
+            var renderLevel = function (parentId, depth) {
+                page.elements.filter(function (el) { return (el.parentId || "") === parentId; })
+                    .forEach(function (el) {
+                        var row = document.createElement("div");
+                        row.className = "ui-structure-item" + (el.id === uiSelectedId &&
+                            uiLayout && uiLayout.id === page.id ? " active" : "") +
+                            (uiIsContainerType(el.type) ? " container" : "");
+                        row.style.paddingLeft = (8 + (depth + 1) * 12) + "px";
+                        row.innerHTML = '<span class="ui-structure-icon">' +
+                            escapeHtml(UI_TYPE_ICONS[el.type] || "•") +
+                            '</span><span class="ui-structure-label">' +
+                            escapeHtml(el.text || UI_TYPE_LABELS[el.type]) + "</span>";
+                        row.title = (page.name || page.id) + " · " + UI_TYPE_LABELS[el.type] + " · " + el.id;
+                        row.tabIndex = 0;
+                        row.setAttribute("role", "button");
+                        row.addEventListener("keydown", function (e) {
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                uiSelectElementOnPage(page, el.id);
+                                uiRenderStructure();
+                            }
+                        });
+                        row.addEventListener("click", function () {
+                            uiSelectElementOnPage(page, el.id);
                             uiRenderStructure();
-                        }
+                        });
+                        uiStructure.appendChild(row);
+                        renderLevel(el.id, depth + 1);
                     });
-                    row.addEventListener("click", function () {
-                        uiSelectElement(el.id);
-                        uiRenderStructure();
-                    });
-                    uiStructure.appendChild(row);
-                    renderLevel(el.id, depth + 1);
-                });
-        };
-        renderLevel("", 0);
+            };
+            renderLevel("", 0);
+        });
     }
 
     function uiDefaultPosition(type, w, h) {
@@ -4511,16 +6848,18 @@
         ];
     }
 
-    function buildUiCanvasElement(el) {
+    function buildUiCanvasElement(el, page) {
+        var host = page || uiLayout;
         var node = document.createElement("div");
-        var depth = uiLayout ? uiElementDepth(uiLayout, el) : 0;
-        var childCount = uiLayout ? uiLayout.elements.filter(function (child) {
+        var depth = host ? uiElementDepth(host, el) : 0;
+        var childCount = host ? host.elements.filter(function (child) {
             return child.parentId === el.id;
         }).length : 0;
         node.className = "ui-canvas-el" + (el.id === uiSelectedId ? " selected" : "") +
             (depth ? " nested" : "") + (uiIsContainerType(el.type) ? " container-type" : "") +
             (el.id === uiConnectFrom ? " connect-source" : "");
         node.setAttribute("data-id", el.id);
+        node.setAttribute("data-page-id", host ? host.id : "");
         node.setAttribute("data-type", el.type);
         node.setAttribute("data-parent-id", el.parentId || "");
         node.tabIndex = 0;
@@ -4537,7 +6876,7 @@
         node.style.top = el.y + "px";
         node.style.width = el.w + "px";
         node.style.height = el.h + "px";
-        node.style.zIndex = String(10 + depth * 10 + uiLayout.elements.indexOf(el));
+        node.style.zIndex = String(10 + depth * 10 + (host ? host.elements.indexOf(el) : 0));
         var icon = document.createElement("span");
         icon.className = "ui-canvas-icon";
         icon.textContent = UI_TYPE_ICONS[el.type] || "•";
@@ -4895,8 +7234,9 @@
         }[dir] || "move") : "move";
 
         function onMove(ev) {
-            var dx = Math.round((ev.clientX - startX) / 5) * 5;
-            var dy = Math.round((ev.clientY - startY) / 5) * 5;
+            var zoomFactor = uiZoom || 1;
+            var dx = Math.round((ev.clientX - startX) / zoomFactor / 5) * 5;
+            var dy = Math.round((ev.clientY - startY) / zoomFactor / 5) * 5;
             if (!dir) {
                 uiApplyElementGeometry(el, start.x + dx, start.y + dy, start.w, start.h);
                 var actualX = el.x - start.x;
@@ -4999,23 +7339,599 @@
         uiRenderStructure();
     }
 
-    function uiRenderEditor() {
-        if (!uiCanvas || !uiLayout) return;
-        uiCanvas.style.width = uiLayout.width + "px";
-        uiCanvas.style.height = uiLayout.height + "px";
-        uiCanvas.innerHTML = "";
-        uiSortedElements(uiLayout).forEach(function (el) {
-            uiCanvas.appendChild(buildUiCanvasElement(el));
+    /* ===================== 画布模式 / 预览模式 ===================== */
+    var UI_FRAME_HEAD = 30;
+    var UI_FRAME_GAP_X = 140;
+    var UI_FRAME_GAP_Y = 90;
+    var UI_CANVAS_PAD = 40;
+
+    function uiPageById(pageId) {
+        return uiDoc && pageId ? uiFindPage(uiDoc, pageId) : null;
+    }
+
+    function uiDocHasPagePositions() {
+        if (!uiDoc) return false;
+        return uiDoc.pages.some(function (page) { return page.x || page.y; });
+    }
+
+    /* 按窗口归属树自动排布所有窗口：列 = 层级深度，行 = 同级顺序 */
+    function uiAutoLayoutPages() {
+        if (!uiDoc || !uiDoc.pages.length) return;
+        var depthOf = Object.create(null);
+        var order = [];
+        var visit = function (page, depth) {
+            if (depthOf[page.id] !== undefined) return;
+            depthOf[page.id] = depth;
+            order.push(page);
+            uiDoc.pages.forEach(function (child) {
+                if (child.parentId === page.id) visit(child, depth + 1);
+            });
+        };
+        uiDoc.pages.forEach(function (page) {
+            if (!page.parentId || !uiFindPage(uiDoc, page.parentId)) visit(page, 0);
         });
-        uiEditorSize.textContent = uiLayout.width + " × " + uiLayout.height;
-        uiCanvasWidth.value = uiLayout.width;
-        uiCanvasHeight.value = uiLayout.height;
+        uiDoc.pages.forEach(function (page) {
+            if (depthOf[page.id] === undefined) visit(page, 0);
+        });
+        var colWidth = Object.create(null);
+        var colX = Object.create(null);
+        order.forEach(function (page) {
+            var d = depthOf[page.id];
+            colWidth[d] = Math.max(colWidth[d] || 0, page.width);
+        });
+        var x = UI_CANVAS_PAD;
+        Object.keys(colWidth).map(Number).sort(function (a, b) { return a - b; })
+            .forEach(function (d) {
+                colX[d] = x;
+                x += colWidth[d] + UI_FRAME_GAP_X;
+            });
+        var cursor = Object.create(null);
+        order.forEach(function (page) {
+            var d = depthOf[page.id];
+            page.x = Math.round(colX[d]);
+            page.y = Math.round(UI_CANVAS_PAD + (cursor[d] || 0));
+            cursor[d] = (cursor[d] || 0) + page.height + UI_FRAME_HEAD + UI_FRAME_GAP_Y;
+        });
+    }
+
+    function uiPlacePageBelow(page) {
+        if (!uiDoc) return;
+        var maxY = 0;
+        uiDoc.pages.forEach(function (other) {
+            if (other === page) return;
+            maxY = Math.max(maxY, (other.y || 0) + other.height + UI_FRAME_HEAD);
+        });
+        page.x = UI_CANVAS_PAD;
+        page.y = maxY ? maxY + UI_FRAME_GAP_Y : UI_CANVAS_PAD;
+    }
+
+    function uiDocCanvasSize() {
+        var maxX = 0, maxY = 0;
+        (uiDoc ? uiDoc.pages : []).forEach(function (page) {
+            maxX = Math.max(maxX, (page.x || 0) + page.width);
+            maxY = Math.max(maxY, (page.y || 0) + page.height + UI_FRAME_HEAD);
+        });
+        var zoom = uiZoom || 1;
+        var wrapW = uiCanvasWrap ? Math.max(0, uiCanvasWrap.clientWidth - 40) / zoom : 0;
+        var wrapH = uiCanvasWrap ? Math.max(0, uiCanvasWrap.clientHeight - 40) / zoom : 0;
+        return {
+            width: Math.max(320, Math.round(maxX + UI_CANVAS_PAD), Math.round(wrapW)),
+            height: Math.max(240, Math.round(maxY + UI_CANVAS_PAD), Math.round(wrapH))
+        };
+    }
+
+    function uiFrameNode(pageId) {
+        if (!uiCanvas || !pageId) return null;
+        return uiCanvas.querySelector('.ui-frame[data-page-id="' + pageId + '"]');
+    }
+
+    function uiRefreshFrameSelection() {
+        if (!uiCanvas) return;
+        var frames = uiCanvas.querySelectorAll(".ui-frame");
+        for (var i = 0; i < frames.length; i++) {
+            frames[i].classList.toggle("selected",
+                frames[i].getAttribute("data-page-id") === uiSelectedPageId);
+        }
+    }
+
+    function uiUpdateCanvasExtent() {
+        if (!uiCanvas || !uiDoc) return;
+        var sizes = uiDocCanvasSize();
+        uiCanvas.style.width = sizes.width + "px";
+        uiCanvas.style.height = sizes.height + "px";
+        uiEditorSize.textContent = uiDoc.pages.length + " 个窗口 · 画布 " +
+            sizes.width + " × " + sizes.height;
+    }
+
+    /* 页面属性变化时原地刷新窗口框外观 */
+    function uiRefreshFrame(page) {
+        if (!page || !uiCanvas) return;
+        var node = uiFrameNode(page.id);
+        if (!node) return;
+        node.classList.toggle("dialog", page.kind === "dialog");
+        node.style.left = (page.x || 0) + "px";
+        node.style.top = (page.y || 0) + "px";
+        node.style.width = page.width + "px";
+        var title = node.querySelector(".ui-frame-title");
+        if (title) title.textContent = page.name || page.id;
+        var kind = node.querySelector(".ui-frame-kind");
+        if (kind) kind.textContent = UI_PAGE_KINDS[page.kind] || "窗口";
+        var body = node.querySelector(".ui-frame-body");
+        if (body) {
+            body.style.width = page.width + "px";
+            body.style.height = page.height + "px";
+        }
+        uiUpdateCanvasExtent();
+        uiRenderPageTabs();
+        uiRenderPageLinks();
+    }
+
+    function uiSelectPage(pageId) {
+        uiSelectedPageId = pageId || "";
+        var page = uiPageById(uiSelectedPageId);
+        if (page) uiLayout = page;
+        uiSelectedId = null;
+        uiRefreshFrameSelection();
+        uiRenderProps();
+        uiRenderStructure();
+        uiRenderPageLinks();
+    }
+
+    /* 选中某个窗口里的控件：先切到该窗口上下文，再走原有选中流程 */
+    function uiSelectElementOnPage(page, id) {
+        if (page) {
+            uiLayout = page;
+            uiSelectedPageId = page.id;
+            uiRefreshFrameSelection();
+        }
+        uiSelectElement(id);
+    }
+
+    function uiScrollFrameIntoView(pageId) {
+        var node = uiFrameNode(pageId);
+        if (!node || !uiCanvasWrap || uiMode !== "canvas") return;
+        var wrapRect = uiCanvasWrap.getBoundingClientRect();
+        var rect = node.getBoundingClientRect();
+        uiCanvasWrap.scrollLeft += (rect.left - wrapRect.left) - 24;
+        uiCanvasWrap.scrollTop += (rect.top - wrapRect.top) - 24;
+    }
+
+    function uiStartFrameDrag(e, page) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (uiConnectMode && uiConnectFrom) {
+            uiCreateConnectionTo(page.id);
+            return;
+        }
+        uiSelectPage(page.id);
+        uiScrollFrameIntoView(page.id);
+        var startX = e.clientX, startY = e.clientY;
+        var baseX = page.x, baseY = page.y;
+        var zoom = uiZoom || 1;
+        var moved = false;
+        document.body.classList.add("dialog-dragging");
+        document.body.style.cursor = "move";
+        function onMove(ev) {
+            page.x = Math.max(0, Math.round(baseX + (ev.clientX - startX) / zoom));
+            page.y = Math.max(0, Math.round(baseY + (ev.clientY - startY) / zoom));
+            var node = uiFrameNode(page.id);
+            if (node) {
+                node.style.left = page.x + "px";
+                node.style.top = page.y + "px";
+            }
+            uiRenderPageLinks();
+            moved = true;
+        }
+        function onUp() {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.body.classList.remove("dialog-dragging");
+            document.body.style.cursor = "";
+            if (!moved) return;
+            uiUpdateCanvasExtent();
+            uiRenderPageLinks();
+            uiSyncPropInputs();
+            uiRenderPageProps();
+            if (uiPageX) uiPageX.value = Math.round(page.x || 0);
+            if (uiPageY) uiPageY.value = Math.round(page.y || 0);
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    /* 从窗口右侧 ⇢ 手柄拖到另一个窗口：建立窗口之间的打开/关闭关系 */
+    function uiStartPageLinkDrag(e, page) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        uiSelectPage(page.id);
+        uiPageLinkDrag = { from: page.id, x: 0, y: 0 };
+        uiEditorHint.textContent = "拖到目标窗口上松开即可建立「打开」关系；动作可在右侧「交互」里改为关闭/返回";
+        function onMove(ev) {
+            if (!uiPageLinkDrag) return;
+            var rect = uiCanvas.getBoundingClientRect();
+            var zoom = uiZoom || 1;
+            uiPageLinkDrag.x = (ev.clientX - rect.left) / zoom;
+            uiPageLinkDrag.y = (ev.clientY - rect.top) / zoom;
+            uiRenderPageLinks();
+        }
+        function onUp(ev) {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            var fromPage = uiPageById(uiPageLinkDrag ? uiPageLinkDrag.from : "");
+            /* 用几何命中窗口框，避免被连线 SVG 或子元素挡住拖拽命中 */
+            var toPage = null;
+            if (uiDoc && uiCanvas) {
+                var rect = uiCanvas.getBoundingClientRect();
+                var zoom = uiZoom || 1;
+                var cx = (ev.clientX - rect.left) / zoom;
+                var cy = (ev.clientY - rect.top) / zoom;
+                for (var i = uiDoc.pages.length - 1; i >= 0; i--) {
+                    var candidate = uiDoc.pages[i];
+                    if (cx >= candidate.x && cx <= candidate.x + candidate.width &&
+                        cy >= (candidate.y || 0) &&
+                        cy <= (candidate.y || 0) + candidate.height + UI_FRAME_HEAD) {
+                        toPage = candidate;
+                        break;
+                    }
+                }
+            }
+            uiPageLinkDrag = null;
+            if (fromPage && toPage && toPage.id !== fromPage.id) {
+                uiCreatePageTransition(fromPage, toPage, "open");
+                return;
+            }
+            uiRenderPageLinks();
+            uiEditorHint.textContent = fromPage && toPage
+                ? "不能连接到自己，请拖到另一个窗口"
+                : "已取消建立关系";
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    function uiCreatePageTransition(fromPage, toPage, action) {
+        if (!uiDoc || !fromPage || !toPage || fromPage.id === toPage.id) return;
+        var trigger = fromPage.elements.filter(function (el) { return el.type === "button"; })[0];
+        if (!trigger) {
+            var w = Math.min(180, Math.max(96, fromPage.width - 48));
+            var h = Math.min(36, Math.max(24, fromPage.height - 24));
+            var created = {
+                id: "e" + (++uiElementSeq),
+                type: "button",
+                parentId: "",
+                x: Math.max(16, Math.round((fromPage.width - w) / 2)),
+                y: Math.max(16, Math.round((fromPage.height - h) / 2)),
+                w: w, h: h,
+                text: (toPage.kind === "dialog" ? "打开：" : "前往：") + (toPage.name || toPage.id),
+                props: { variant: "primary" }
+            };
+            while (uiFindElementAnywhere(uiDoc, created.id)) created.id = "e" + (++uiElementSeq);
+            fromPage.elements.push(created);
+            trigger = created;
+        }
+        var conn = {
+            id: "c" + (++uiConnSeq),
+            from: trigger.id,
+            event: "click",
+            action: UI_ACTIONS.indexOf(action) >= 0 ? action : "open",
+            target: toPage.id,
+            value: ""
+        };
+        while (uiDoc.connections.some(function (item) { return item.id === conn.id; })) {
+            conn.id = "c" + (++uiConnSeq);
+        }
+        uiDoc.connections.push(conn);
+        uiRenderEditor();
+        uiSelectElementOnPage(fromPage, trigger.id);
+        uiEditorHint.textContent = "已建立窗口关系：" + (fromPage.name || fromPage.id) + " → " +
+            (UI_ACTION_LABELS[conn.action] || conn.action) + " → " + (toPage.name || toPage.id) +
+            "（触发控件：" + (trigger.text || trigger.id) + "）；可在右侧「交互」里改动作";
+    }
+
+    function buildUiFrame(page) {
+        var frame = document.createElement("div");
+        frame.className = "ui-frame" + (page.kind === "dialog" ? " dialog" : "") +
+            (page.id === uiSelectedPageId ? " selected" : "");
+        frame.setAttribute("data-page-id", page.id);
+        frame.style.left = (page.x || 0) + "px";
+        frame.style.top = (page.y || 0) + "px";
+        frame.style.width = page.width + "px";
+
+        var head = document.createElement("div");
+        head.className = "ui-frame-head";
+        head.title = "拖动标题栏移动窗口；点右侧 ⇢ 拖到别的窗口建立打开/关闭关系";
+        var icon = document.createElement("span");
+        icon.className = "ui-frame-icon";
+        icon.textContent = page.kind === "dialog" ? "◈" : "▣";
+        head.appendChild(icon);
+        var title = document.createElement("span");
+        title.className = "ui-frame-title";
+        title.textContent = page.name || page.id;
+        head.appendChild(title);
+        var kind = document.createElement("span");
+        kind.className = "ui-frame-kind";
+        kind.textContent = UI_PAGE_KINDS[page.kind] || "窗口";
+        head.appendChild(kind);
+        if (uiDoc && page.id === uiDoc.start) {
+            var startFlag = document.createElement("span");
+            startFlag.className = "ui-frame-flag start";
+            startFlag.textContent = "启动";
+            head.appendChild(startFlag);
+        }
+        if (page.open) {
+            var openFlag = document.createElement("span");
+            openFlag.className = "ui-frame-flag open";
+            openFlag.textContent = "初始打开";
+            head.appendChild(openFlag);
+        }
+        if (page.parentId) {
+            var owner = uiPageById(page.parentId);
+            if (owner) {
+                var ownerFlag = document.createElement("span");
+                ownerFlag.className = "ui-frame-flag";
+                ownerFlag.textContent = "属于 " + (owner.name || owner.id);
+                head.appendChild(ownerFlag);
+            }
+        }
+        var link = document.createElement("button");
+        link.type = "button";
+        link.className = "ui-frame-link";
+        link.textContent = "⇢";
+        link.title = "拖动到另一个窗口，建立“打开 / 关闭”关系";
+        link.addEventListener("pointerdown", function (e) {
+            uiStartPageLinkDrag(e, page);
+        });
+        head.appendChild(link);
+        head.addEventListener("pointerdown", function (e) {
+            if (e.target && e.target.closest && e.target.closest("button")) return;
+            uiStartFrameDrag(e, page);
+        });
+        frame.appendChild(head);
+
+        var body = document.createElement("div");
+        body.className = "ui-frame-body";
+        body.style.width = page.width + "px";
+        body.style.height = page.height + "px";
+        uiSortedElements(page).forEach(function (el) {
+            body.appendChild(buildUiCanvasElement(el, page));
+        });
+        frame.appendChild(body);
+        return frame;
+    }
+
+    function uiFrameElementPoint(page, el, side) {
+        var originX = page.x || 0;
+        var originY = (page.y || 0) + UI_FRAME_HEAD;
+        if (!el) {
+            return side === "left"
+                ? { x: originX, y: originY + page.height / 2 }
+                : { x: originX + page.width, y: originY + page.height / 2 };
+        }
+        return {
+            x: originX + el.x + (side === "left" ? 0 : el.w),
+            y: originY + el.y + el.h / 2
+        };
+    }
+
+    /* 窗口之间的打开/关闭关系 = 流程图式连线；开启「逻辑连线」时再叠加控件级连线 */
+    function uiRenderPageLinks() {
+        if (!uiCanvas || !uiDoc || uiMode !== "canvas") return;
+        var old = uiCanvas.querySelector(".ui-link-svg");
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+        var width = parseInt(uiCanvas.style.width, 10) || 0;
+        var height = parseInt(uiCanvas.style.height, 10) || 0;
+        if (!width || !height) return;
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "ui-link-svg");
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+        svg.setAttribute("width", width);
+        svg.setAttribute("height", height);
+        svg.innerHTML = "<defs>" +
+            '<marker id="ui-link-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">' +
+            '<path d="M0,0 L9,4.5 L0,9 z" fill="#0969da"></path></marker>' +
+            '<marker id="ui-link-arrow-close" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">' +
+            '<path d="M0,0 L9,4.5 L0,9 z" fill="#cf222e"></path></marker>' +
+            '<marker id="ui-link-arrow-back" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">' +
+            '<path d="M0,0 L9,4.5 L0,9 z" fill="#bf8700"></path></marker>' +
+            "</defs>";
+
+        var addPath = function (d, className, color) {
+            var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", d);
+            path.setAttribute("class", className);
+            if (color) path.setAttribute("stroke", color);
+            svg.appendChild(path);
+            return path;
+        };
+        var addLabel = function (x, y, text) {
+            var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            label.setAttribute("x", x);
+            label.setAttribute("y", y);
+            label.setAttribute("text-anchor", "middle");
+            label.setAttribute("class", "ui-link-label");
+            label.textContent = text;
+            svg.appendChild(label);
+        };
+
+        /* 1) 窗口归属（窗口包含关系），虚线：父窗口底边 → 子窗口顶边 */
+        uiDoc.pages.forEach(function (page) {
+            if (!page.parentId) return;
+            var parent = uiPageById(page.parentId);
+            if (!parent) return;
+            var from = { x: (parent.x || 0) + parent.width / 2,
+                         y: (parent.y || 0) + parent.height + UI_FRAME_HEAD };
+            var to = { x: (page.x || 0) + page.width / 2, y: page.y || 0 };
+            var midY = (from.y + to.y) / 2;
+            addPath("M" + from.x + "," + from.y +
+                " C" + from.x + "," + midY + " " + to.x + "," + midY +
+                " " + to.x + "," + to.y,
+                "ui-link-line", "#8250df").setAttribute("stroke-dasharray", "3 4");
+            addLabel((from.x + to.x) / 2, midY - 4, "窗口归属");
+        });
+
+        /* 2) 窗口之间的打开 / 关闭 / 返回关系（按 源窗口→目标窗口→动作 聚合） */
+        var transitions = [];
+        var index = Object.create(null);
+        uiDoc.connections.forEach(function (conn) {
+            var source = uiFindElementAnywhere(uiDoc, conn.from);
+            if (!source) return;
+            var fromPage = source.page;
+            var toPage = uiPageById(conn.target);
+            var targetElement = null;
+            if (!toPage) {
+                var info = uiFindElementAnywhere(uiDoc, conn.target);
+                if (info) {
+                    toPage = info.page;
+                    targetElement = info.element;
+                } else if (conn.action === "back") {
+                    toPage = fromPage.parentId ? uiPageById(fromPage.parentId) : null;
+                } else if (conn.action === "close") {
+                    toPage = fromPage;
+                }
+            }
+            if (!toPage || toPage.id === fromPage.id) return;
+            var key = fromPage.id + "|" + toPage.id + "|" + conn.action;
+            if (index[key] === undefined) {
+                index[key] = transitions.length;
+                transitions.push({
+                    from: fromPage,
+                    to: toPage,
+                    action: conn.action,
+                    count: 1,
+                    via: source.element,
+                    target: targetElement
+                });
+            } else {
+                transitions[index[key]].count++;
+            }
+        });
+        transitions.forEach(function (item) {
+            var from = uiFrameElementPoint(item.from, null, "right");
+            var to = item.target
+                ? uiFrameElementPoint(item.to, item.target, "left")
+                : uiFrameElementPoint(item.to, null, "left");
+            var dx = Math.max(40, Math.abs(to.x - from.x) * 0.45);
+            var path = addPath("M" + from.x + "," + from.y +
+                " C" + (from.x + dx) + "," + from.y + " " + (to.x - dx) + "," + to.y +
+                " " + to.x + "," + to.y,
+                "ui-link-line action-" + item.action);
+            path.setAttribute("marker-end", "url(#ui-link-arrow" +
+                (item.action === "close" ? "-close" : (item.action === "back" ? "-back" : "")) + ")");
+            path.addEventListener("click", function (e) {
+                e.stopPropagation();
+                uiSelectElementOnPage(item.from, item.via.id);
+                uiEditorHint.textContent = "窗口关系：" + (item.from.name || item.from.id) + " → " +
+                    (UI_ACTION_LABELS[item.action] || item.action) + " → " + (item.to.name || item.to.id);
+            });
+            addLabel((from.x + to.x) / 2, (from.y + to.y) / 2 - 6,
+                (UI_ACTION_LABELS[item.action] || item.action) + (item.count > 1 ? " ×" + item.count : ""));
+        });
+
+        /* 3) 控件级交互连线（可选） */
+        if (uiLogicOn) {
+            uiDoc.connections.forEach(function (conn) {
+                var source = uiFindElementAnywhere(uiDoc, conn.from);
+                if (!source) return;
+                var info = uiFindElementAnywhere(uiDoc, conn.target);
+                var from = uiFrameElementPoint(source.page, source.element, "right");
+                var to;
+                if (info) {
+                    to = uiFrameElementPoint(info.page, info.element, "left");
+                } else {
+                    var targetPage = uiPageById(conn.target);
+                    if (!targetPage) return;
+                    to = uiFrameElementPoint(targetPage, null, "left");
+                }
+                var dx = Math.max(30, Math.abs(to.x - from.x) * 0.4);
+                addPath("M" + from.x + "," + from.y +
+                    " C" + (from.x + dx) + "," + from.y + " " + (to.x - dx) + "," + to.y +
+                    " " + to.x + "," + to.y,
+                    "ui-link-line action-" + conn.action, "#8c959f")
+                    .setAttribute("stroke-dasharray", "2 3");
+            });
+        }
+
+        /* 4) 正在拖拽建立关系的临时线 */
+        if (uiPageLinkDrag) {
+            var fromPage = uiPageById(uiPageLinkDrag.from);
+            if (fromPage) {
+                var start = uiFrameElementPoint(fromPage, null, "right");
+                addPath("M" + start.x + "," + start.y + " L" + uiPageLinkDrag.x + "," + uiPageLinkDrag.y,
+                    "ui-link-line temp", "#bf8700");
+            }
+        }
+        uiCanvas.appendChild(svg);
+    }
+
+    function uiRenderCanvasMode() {
+        if (uiPreviewHost) {
+            uiPreviewHost.hidden = true;
+            uiPreviewHost.innerHTML = "";
+        }
+        uiPreviewRuntime = null;
+        uiCanvas.hidden = false;
+        if (!uiDocHasPagePositions()) uiAutoLayoutPages();
+        if (!uiSelectedPageId) uiSelectedPageId = uiLayout ? uiLayout.id : "";
+        var sizes = uiDocCanvasSize();
+        uiCanvas.style.width = sizes.width + "px";
+        uiCanvas.style.height = sizes.height + "px";
+        uiCanvas.innerHTML = "";
+        uiDoc.pages.forEach(function (page) {
+            uiCanvas.appendChild(buildUiFrame(page));
+        });
+        if (uiLayout) {
+            uiCanvasWidth.value = uiLayout.width;
+            uiCanvasHeight.value = uiLayout.height;
+        }
+        uiEditorSize.textContent = uiDoc.pages.length + " 个窗口 · 画布 " +
+            sizes.width + " × " + sizes.height;
+        uiRefreshFrameSelection();
+        uiRenderPageLinks();
+    }
+
+    function uiRenderPreviewMode() {
+        if (!uiPreviewHost || !uiDoc) return;
+        uiCanvas.hidden = true;
+        uiPreviewHost.hidden = false;
+        uiPreviewHost.innerHTML = "";
+        var runtime = buildUiRuntime(uiDoc);
+        uiPreviewHost.appendChild(runtime);
+        uiPreviewRuntime = runtime;
+        if (runtime._uiFit) setTimeout(runtime._uiFit, 0);
+        uiEditorSize.textContent = "预览 · " + uiDoc.pages.length + " 个窗口";
+    }
+
+    function uiRenderEditor() {
+        if (!uiCanvas || !uiLayout || !uiDoc) return;
         if (uiSelectedId && !uiSelectedElement()) uiSelectedId = null;
+        if (uiMode === "preview") {
+            uiRenderPreviewMode();
+        } else {
+            uiRenderCanvasMode();
+        }
         uiRenderPageTabs();
         uiRenderStructure();
         uiRenderProps();
-        uiRenderLogic();
     }
+
+    function uiSetMode(mode) {
+        uiMode = mode === "preview" ? "preview" : "canvas";
+        if (uiModeCanvasBtn) uiModeCanvasBtn.classList.toggle("active", uiMode === "canvas");
+        if (uiModePreviewBtn) uiModePreviewBtn.classList.toggle("active", uiMode === "preview");
+        if (uiMode === "preview") {
+            uiConnectMode = false;
+            uiConnectFrom = null;
+            uiPageLinkDrag = null;
+            uiUpdateConnectButton();
+        }
+        uiRenderEditor();
+        uiEditorHint.textContent = uiMode === "preview"
+            ? "预览模式：直接运行原型，点按钮可打开/关闭窗口（改动需切回画布模式）"
+            : "画布模式：拖窗口标题栏移动，拖 ⇢ 手柄到目标窗口建立打开/关闭关系";
+    }
+
 
     function addUiElement(type) {
         if (!uiLayout || !UI_TYPE_LABELS[type]) return;
@@ -5094,7 +8010,7 @@
             if (uiIsContainerType(el.type)) uiClampChildrenToParent(el);
         });
         uiRenderEditor();
-        uiEditorHint.textContent = "画布尺寸已调整为 " + w + " × " + h;
+        uiEditorHint.textContent = "当前窗口尺寸已调整为 " + w + " × " + h;
     }
 
     function uiSyncPropsFromFields() {
@@ -5131,6 +8047,7 @@
         };
         while (uiFindPage(uiDoc, page.id)) page.id = "p" + (++uiPageSeq);
         uiDoc.pages.push(page);
+        uiPlacePageBelow(page);
         uiSwitchPage(page.id);
         uiEditorHint.textContent = "已创建「" + page.name + "」；可在右侧设置窗口归属和启动页";
     }
@@ -5155,6 +8072,7 @@
             return !!targetOk && !!fromOk;
         });
         if (uiDoc.start === removed.id) uiDoc.start = uiDoc.pages[0].id;
+        if (uiSelectedPageId === removed.id) uiSelectedPageId = "";
         uiSwitchPage(uiDoc.pages[Math.max(0, index - 1)].id);
         uiEditorHint.textContent = "已删除页面「" + removed.name + "」";
     }
@@ -5255,7 +8173,7 @@
         uiRenderLogic();
         uiUpdateConnectButton();
         uiEditorHint.textContent = uiConnectMode
-            ? "连线模式：先点击源控件，再点击目标控件或页面标签"
+            ? "连线模式：先点击源控件，再点击目标控件或目标窗口框"
             : "已退出连线模式";
     }
 
@@ -5268,7 +8186,9 @@
             uiUpdateConnectButton();
         }
         uiRenderLogic();
-        uiEditorHint.textContent = uiLogicOn ? "逻辑连线已显示；可开启连线模式创建交互" : "逻辑连线已隐藏";
+        uiEditorHint.textContent = uiLogicOn
+            ? "已显示控件级交互连线（灰色虚线）；窗口打开/关闭关系始终显示"
+            : "已隐藏控件级交互连线（窗口关系仍显示）";
     }
 
     function uiLogicChipPoint(pageId) {
@@ -5281,122 +8201,8 @@
     }
 
     function uiRenderLogic() {
-        if (!uiCanvas || !uiLayout) return;
-        var oldSvg = uiCanvas.querySelector(".ui-logic-svg");
-        if (oldSvg) oldSvg.parentNode.removeChild(oldSvg);
-        var oldChips = uiCanvas.querySelector(".ui-logic-targets");
-        if (oldChips) oldChips.parentNode.removeChild(oldChips);
-        if (!uiLogicOn || !uiDoc) return;
-
-        var chips = document.createElement("div");
-        chips.className = "ui-logic-targets";
-        var chipRects = {};
-        uiDoc.pages.forEach(function (page, index) {
-            var chip = document.createElement("button");
-            chip.type = "button";
-            chip.className = "ui-logic-chip" + (page.id === uiLayout.id ? " current" : "");
-            chip.setAttribute("data-page-id", page.id);
-            chip.textContent = (page.kind === "dialog" ? "◈ " : "▣ ") + (page.name || page.id);
-            chip.style.top = (12 + index * 34) + "px";
-            chip.title = "点击连接到页面 / 窗口：" + (page.name || page.id);
-            chip.addEventListener("click", function (e) {
-                e.stopPropagation();
-                if (uiConnectFrom) uiCreateConnectionTo(page.id);
-                else if (page.id !== uiLayout.id) uiSwitchPage(page.id);
-            });
-            chips.appendChild(chip);
-            chipRects[page.id] = {
-                x: uiLayout.width - 18,
-                y: 26 + index * 34
-            };
-        });
-        uiCanvas.appendChild(chips);
-
-        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("class", "ui-logic-svg");
-        svg.setAttribute("viewBox", "0 0 " + uiLayout.width + " " + uiLayout.height);
-        svg.setAttribute("width", uiLayout.width);
-        svg.setAttribute("height", uiLayout.height);
-        var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-        defs.innerHTML = '<marker id="ui-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">' +
-            '<path d="M0,0 L8,4 L0,8 z" fill="#0969da"></path></marker>';
-        svg.appendChild(defs);
-
-        uiDoc.connections.forEach(function (conn) {
-            var from = uiFindElement(uiLayout, conn.from);
-            if (!from) return;
-            var targetPage = uiFindPage(uiDoc, conn.target);
-            var targetInfo = targetPage ? null : uiFindElementAnywhere(uiDoc, conn.target);
-            var target;
-            if (targetPage) {
-                target = chipRects[targetPage.id];
-            } else if (targetInfo && targetInfo.page === uiLayout) {
-                target = {
-                    x: targetInfo.element.x + targetInfo.element.w / 2,
-                    y: targetInfo.element.y + targetInfo.element.h / 2
-                };
-            } else if (targetInfo) {
-                target = chipRects[targetInfo.page.id];
-            } else if (conn.action === "alert") {
-                target = {
-                    x: Math.min(uiLayout.width - 18, from.x + from.w + 44),
-                    y: from.y + from.h / 2
-                };
-            } else if (conn.action === "back") {
-                target = chipRects[uiLayout.parentId || uiLayout.id] || chipRects[uiLayout.id];
-            } else if (conn.action === "close") {
-                target = chipRects[uiLayout.id];
-            }
-            if (!target) return;
-            var sx = from.x + from.w;
-            var sy = from.y + from.h / 2;
-            var tx = target.x;
-            var ty = target.y;
-            var midX = (sx + tx) / 2;
-            var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", "M" + sx + "," + sy + " C" + (sx + 50) + "," + sy +
-                " " + (tx - 50) + "," + ty + " " + tx + "," + ty);
-            path.setAttribute("class", "ui-logic-line action-" + conn.action +
-                (targetPage || (targetInfo && targetInfo.page !== uiLayout) ? " page-link" : ""));
-            path.setAttribute("marker-end", "url(#ui-arrow)");
-            path.addEventListener("click", function (e) {
-                e.stopPropagation();
-                uiSelectElement(conn.from);
-                uiEditorHint.textContent = "连线：" + (UI_EVENT_LABELS[conn.event] || conn.event) +
-                    " → " + (UI_ACTION_LABELS[conn.action] || conn.action) +
-                    " · 可在右侧修改或删除";
-            });
-            svg.appendChild(path);
-            var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            label.setAttribute("x", midX);
-            label.setAttribute("y", (sy + ty) / 2 - 5);
-            label.setAttribute("class", "ui-logic-label");
-            label.textContent = (UI_EVENT_LABELS[conn.event] || conn.event) + "→" +
-                (UI_ACTION_LABELS[conn.action] || conn.action);
-            svg.appendChild(label);
-        });
-
-        uiDoc.pages.forEach(function (page) {
-            if (!page.parentId || !chipRects[page.parentId] || !chipRects[page.id]) return;
-            var parentPoint = chipRects[page.parentId];
-            var childPoint = chipRects[page.id];
-            var line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            line.setAttribute("d", "M" + parentPoint.x + "," + parentPoint.y +
-                " C" + (parentPoint.x + 18) + "," + parentPoint.y +
-                " " + (childPoint.x + 18) + "," + childPoint.y +
-                " " + childPoint.x + "," + childPoint.y);
-            line.setAttribute("class", "ui-logic-ownership");
-            svg.appendChild(line);
-            var ownerLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            ownerLabel.setAttribute("x", childPoint.x - 6);
-            ownerLabel.setAttribute("y", (parentPoint.y + childPoint.y) / 2);
-            ownerLabel.setAttribute("text-anchor", "end");
-            ownerLabel.setAttribute("class", "ui-logic-label ownership-label");
-            ownerLabel.textContent = "窗口归属";
-            svg.appendChild(ownerLabel);
-        });
-
-        uiCanvas.insertBefore(svg, uiCanvas.firstChild);
+        /* 画布模式：窗口打开/关闭关系与控件连线统一由 uiRenderPageLinks 绘制 */
+        uiRenderPageLinks();
     }
 
     function openUiEditor(index, source) {
@@ -5447,12 +8253,20 @@
 
         if (uiLogicToggle) uiLogicToggle.classList.toggle("active", uiLogicOn);
         uiUpdateConnectButton();
+        uiMode = "canvas";
+        uiSelectedPageId = uiLayout ? uiLayout.id : "";
+        if (uiModeCanvasBtn) uiModeCanvasBtn.classList.add("active");
+        if (uiModePreviewBtn) uiModePreviewBtn.classList.remove("active");
         uiEditor.hidden = false;
         uiRenderEditor();
+        applyUiZoom();
         layoutFloatingDialog(uiEditor, uiEditorBox);
         uiCanvasWrap.scrollLeft = 0;
         uiCanvasWrap.scrollTop = 0;
-        setTimeout(function () { uiCanvas.focus(); }, 30);
+        setTimeout(function () {
+            if (uiLayout) uiScrollFrameIntoView(uiLayout.id);
+            uiCanvas.focus();
+        }, 30);
     }
 
     function closeUiEditor() {
@@ -5489,6 +8303,8 @@
         document.getElementById("ui-canvas-size-apply").addEventListener("click", applyUiCanvasSize);
         document.getElementById("ui-delete-el").addEventListener("click", deleteUiSelected);
         if (uiPageAdd) uiPageAdd.addEventListener("click", uiAddPage);
+        if (uiModeCanvasBtn) uiModeCanvasBtn.addEventListener("click", function () { uiSetMode("canvas"); });
+        if (uiModePreviewBtn) uiModePreviewBtn.addEventListener("click", function () { uiSetMode("preview"); });
         if (uiPageDelete) uiPageDelete.addEventListener("click", uiDeletePage);
         if (uiLogicToggle) uiLogicToggle.addEventListener("click", uiToggleLogic);
         if (uiConnectToggle) uiConnectToggle.addEventListener("click", uiToggleConnect);
@@ -5500,10 +8316,19 @@
         });
 
         uiCanvas.addEventListener("pointerdown", function (e) {
-            var chip = e.target && e.target.closest ? e.target.closest(".ui-logic-chip") : null;
-            if (chip) return;
+            if (e.button !== undefined && e.button !== 0) return;
             var node = e.target && e.target.closest ? e.target.closest(".ui-canvas-el") : null;
             if (!node) {
+                var frame = e.target && e.target.closest ? e.target.closest(".ui-frame") : null;
+                if (frame) {
+                    var frameId = frame.getAttribute("data-page-id");
+                    if (uiConnectMode && uiConnectFrom) {
+                        uiCreateConnectionTo(frameId);
+                        return;
+                    }
+                    uiSelectPage(frameId);
+                    return;
+                }
                 if (uiConnectMode && uiConnectFrom) {
                     uiConnectFrom = null;
                     uiUpdateConnectButton();
@@ -5511,10 +8336,19 @@
                     uiEditorHint.textContent = "已取消连线源，请重新选择源控件";
                 } else {
                     uiSelectElement(null);
+                    uiSelectedPageId = "";
+                    uiRefreshFrameSelection();
+                    uiRenderProps();
                 }
                 return;
             }
-            var el = uiFindElement(uiLayout, node.getAttribute("data-id"));
+            var page = uiPageById(node.getAttribute("data-page-id")) || uiLayout;
+            if (page && page !== uiLayout) {
+                uiLayout = page;
+                uiSelectedPageId = page.id;
+                uiRefreshFrameSelection();
+            }
+            var el = uiFindElement(page, node.getAttribute("data-id"));
             if (!el) return;
             if (uiConnectMode) {
                 if (!uiConnectFrom) {
@@ -5523,7 +8357,7 @@
                     uiUpdateConnectButton();
                     uiSelectElement(el.id);
                     uiEditorHint.textContent = "已选择源控件「" + (el.text || UI_TYPE_LABELS[el.type]) +
-                        "」，现在点击目标控件或页面标签";
+                        "」，现在点击目标控件或目标窗口框";
                 } else if (uiConnectFrom === el.id) {
                     uiConnectFrom = null;
                     uiUpdateConnectButton();
@@ -5567,13 +8401,14 @@
         if (uiPageName) uiPageName.addEventListener("input", function () {
             if (!uiLayout) return;
             uiLayout.name = uiPageName.value;
-            uiRenderPageTabs();
+            uiRefreshFrame(uiLayout);
             uiRenderStructure();
         });
         if (uiPageKind) uiPageKind.addEventListener("change", function () {
             if (!uiLayout) return;
             uiLayout.kind = uiPageKind.value === "dialog" ? "dialog" : "window";
-            uiRenderPageTabs();
+            uiRefreshFrame(uiLayout);
+            uiRenderStructure();
         });
         if (uiPageParent) uiPageParent.addEventListener("change", function () {
             if (!uiLayout || !uiDoc) return;
@@ -5587,13 +8422,16 @@
                 }
             }
             uiLayout.parentId = parentId;
-            uiRenderPageTabs();
-            uiRenderLogic();
+            uiRenderEditor();
+            uiEditorHint.textContent = parentId
+                ? "已将「" + (uiLayout.name || uiLayout.id) + "」归属到「" +
+                  ((uiPageById(parentId) || {}).name || parentId) + "」"
+                : "已取消窗口归属";
         });
         if (uiPageOpen) uiPageOpen.addEventListener("change", function () {
             if (!uiLayout) return;
             uiLayout.open = uiPageOpen.checked;
-            uiRenderPageTabs();
+            uiRenderEditor();
         });
         [uiPageX, uiPageY].forEach(function (input) {
             if (!input) return;
@@ -5603,6 +8441,7 @@
                 uiLayout.y = Math.max(0, parseInt(uiPageY.value, 10) || 0);
                 uiPageX.value = uiLayout.x;
                 uiPageY.value = uiLayout.y;
+                uiRefreshFrame(uiLayout);
             });
         });
         if (uiPageStart) uiPageStart.addEventListener("change", function () {
@@ -5616,7 +8455,7 @@
                 if (other) uiDoc.start = other.id;
                 else uiPageStart.checked = true;
             }
-            uiRenderPageTabs();
+            uiRenderEditor();
         });
 
         uiCanvasWidth.addEventListener("keydown", function (e) {
@@ -5665,6 +8504,145 @@
             if (e.target === uiEditor) closeUiEditor();
         });
     }
+
+    /* ===================== 光标处对象 / 预览内直接编辑 ===================== */
+    var lastPreviewEditTarget = null;   // { kind, index, source }
+
+    function fencedBlockAtLine(text, line) {
+        var re = /^```([A-Za-z][\w-]*)[^\n]*\n([\s\S]*?)^```/gm;
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            var startLine = text.slice(0, m.index).split("\n").length - 1;
+            var endLine = text.slice(0, re.lastIndex).split("\n").length - 1;
+            if (line >= startLine && line <= endLine) {
+                return { lang: m[1].toLowerCase(), body: m[2], start: m.index, end: re.lastIndex };
+            }
+        }
+        return null;
+    }
+
+    function countFencedBefore(text, endIndex, lang) {
+        var re = new RegExp("```" + lang + "[^\\n]*\\n", "g");
+        var count = 0;
+        var m;
+        while ((m = re.exec(text)) !== null && m.index < endIndex) count++;
+        return count;
+    }
+
+    function tableIndexAtLine(text, line) {
+        var lines = text.split(/\r?\n/);
+        if (line < 0 || line >= lines.length || lines[line].indexOf("|") < 0) return -1;
+        var start = line;
+        while (start > 0 && lines[start - 1].indexOf("|") >= 0) start--;
+        var end = line;
+        while (end + 1 < lines.length && lines[end + 1].indexOf("|") >= 0) end++;
+        if (end - start < 1 || !/^\s*\|?\s*:?-{2,}/.test(lines[start + 1])) return -1;
+        var index = 0;
+        for (var i = 0; i < start; i++) {
+            if (lines[i].indexOf("|") >= 0 && (i === 0 || lines[i - 1].indexOf("|") < 0) &&
+                i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+                index++;
+            }
+        }
+        return index;
+    }
+
+    function editObjectAtCursor(only) {
+        if (!cm) return;
+        var text = cm.getValue();
+        var line = cm.getCursor().line;
+        var block = fencedBlockAtLine(text, line);
+        var status = function (msg) { postMessage({ type: "status", text: msg }); };
+
+        if (block && block.lang === "mermaid") {
+            var isSeq = /^\s*sequenceDiagram\b/i.test(block.body);
+            if (only === "table" || only === "ui") { status("光标处没有可编辑的" + (only === "table" ? "表格" : "UI 原型")); return; }
+            if (only === "sequence" && !isSeq) { status("光标处是流程图，请用「流程图」编辑"); return; }
+            if (only === "mermaid" && isSeq) { status("光标处是时序图，请用「时序图」编辑"); return; }
+            openMermaidEditor(countFencedBefore(text, block.start, "mermaid"), block.body,
+                isSeq ? "sequence" : "flow");
+            return;
+        }
+        if (block && block.lang === "ui") {
+            if (only && only !== "ui") { status("光标处是 UI 原型，请用「UI 原型」编辑"); return; }
+            openUiEditor(countFencedBefore(text, block.start, "ui"), block.body);
+            return;
+        }
+        var tIndex = tableIndexAtLine(text, line);
+        if (tIndex >= 0) {
+            if (only && only !== "table") { status("光标处是表格，请用「表格」编辑"); return; }
+            openTableEditor(tIndex);
+            return;
+        }
+        if (lastPreviewEditTarget) {
+            var target = lastPreviewEditTarget;
+            if (target.kind === "mermaid" && (!only || only === "mermaid" || only === "sequence")) {
+                var seq = /^\s*sequenceDiagram\b/i.test(target.source);
+                if ((only === "sequence" && seq) || (only === "mermaid" && !seq) || !only) {
+                    openMermaidEditor(target.index, target.source, seq ? "sequence" : "flow");
+                    return;
+                }
+            } else if (target.kind === "ui" && (!only || only === "ui")) {
+                openUiEditor(target.index, target.source);
+                return;
+            } else if (target.kind === "table" && (!only || only === "table")) {
+                openTableEditor(target.index);
+                return;
+            }
+        }
+        status(only
+            ? "光标处没有可编辑的" + ({ table: "表格", mermaid: "流程图", sequence: "时序图", ui: "UI 原型" }[only] || "对象")
+            : "请把光标放在表格或 ```mermaid / ```ui 代码块中，或在预览中点击要编辑的对象");
+    }
+
+    /* 预览内 Ctrl+单击（或单击记录目标后点“编辑光标处对象”）直接打开编辑器 */
+    document.getElementById("md-body").addEventListener("click", function (e) {
+        var t = e.target;
+        if (!t || !t.closest) return;
+        var uiBlock = t.closest(".ui-block");
+        if (uiBlock) {
+            lastPreviewEditTarget = {
+                kind: "ui",
+                index: parseInt(uiBlock.getAttribute("data-ui-index"), 10),
+                source: uiBlock.getAttribute("data-ui-src")
+            };
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                openUiEditor(lastPreviewEditTarget.index, lastPreviewEditTarget.source);
+            }
+            return;
+        }
+        var node = t.closest(".mermaid");
+        if (node) {
+            lastPreviewEditTarget = {
+                kind: "mermaid",
+                index: parseInt(node.getAttribute("data-mermaid-index"), 10),
+                source: node.getAttribute("data-mermaid-src")
+            };
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                var seq = /^\s*sequenceDiagram\b/i.test(lastPreviewEditTarget.source || "");
+                openMermaidEditor(lastPreviewEditTarget.index, lastPreviewEditTarget.source,
+                    seq ? "sequence" : "flow");
+            }
+            return;
+        }
+        var tableWrap = t.closest(".table-wrap");
+        if (tableWrap) {
+            lastPreviewEditTarget = {
+                kind: "table",
+                index: parseInt(tableWrap.getAttribute("data-table-index"), 10),
+                source: ""
+            };
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                openTableEditor(lastPreviewEditTarget.index);
+            }
+        }
+    }, true);
 
     /* 双击图表直接打开源码编辑器 */
     document.getElementById("md-body").addEventListener("dblclick", function (e) {
@@ -5861,7 +8839,7 @@
         ]).then(function (parts) {
             var body = document.getElementById("md-body").cloneNode(true);
             body.querySelectorAll(".copy-code").forEach(function (b) { b.remove(); });
-            body.querySelectorAll(".mermaid-edit-btn, .table-edit-btn, .ui-edit-btn").forEach(function (b) { b.remove(); });
+            body.querySelectorAll(".mermaid-edit-btn, .mermaid-zoom-ui, .table-edit-btn, .ui-edit-btn").forEach(function (b) { b.remove(); });
             body.querySelectorAll(".ui-block-head").forEach(function (h) { h.remove(); });
             body.querySelectorAll(".table-wrap").forEach(function (wrap) {
                 while (wrap.firstChild) wrap.parentNode.insertBefore(wrap.firstChild, wrap);
@@ -6700,6 +9678,9 @@
             var root = document.documentElement;
             root.style.setProperty("--preview-font-size", (16 * z).toFixed(2) + "px");
             root.style.setProperty("--editor-font-size", (14.5 * z).toFixed(2) + "px");
+            // 图表类对象（流程图 / 时序图）同步缩放
+            diagramZoom = z;
+            applyDiagramZoom();
             // 连续滚轮缩放时合并 refresh，避免每次像素变化都重排
             if (refreshTimer) clearTimeout(refreshTimer);
             refreshTimer = setTimeout(function () {
@@ -6830,7 +9811,9 @@
         } else if (data.type === "view") {
             setView(data.mode);
         } else if (data.type === "mermaidEditor") {
-            openMermaidEditor(null, data.source || null);
+            openMermaidEditor(null, data.source || null, data.mode || null);
+        } else if (data.type === "editObjectAtCursor") {
+            editObjectAtCursor(data.only || "");
         } else if (data.type === "tableEditor") {
             openTableEditor(null, data.rows, data.cols);
         } else if (data.type === "uiEditor") {
